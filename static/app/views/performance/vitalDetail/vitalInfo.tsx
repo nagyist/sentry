@@ -1,10 +1,10 @@
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Organization} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
-import {WebVital} from 'sentry/utils/fields';
+import type {Organization} from 'sentry/types/organization';
+import toArray from 'sentry/utils/array/toArray';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {WebVital} from 'sentry/utils/fields';
 import VitalsCardDiscoverQuery from 'sentry/utils/performance/vitals/vitalsCardsDiscoverQuery';
-import toArray from 'sentry/utils/toArray';
 
 import {VitalBar} from '../landing/vitalsCards';
 
@@ -24,6 +24,7 @@ type Props = ViewProps & {
   hideVitalThresholds?: boolean;
   isLoading?: boolean;
   p75AllTransactions?: number;
+  queryExtras?: Record<string, string>;
 };
 
 function VitalInfo({
@@ -35,6 +36,7 @@ function VitalInfo({
   hideVitalPercentNames,
   hideVitalThresholds,
   hideDurationDetail,
+  queryExtras,
 }: Props) {
   const vitals = toArray(vital);
   const contentCommonProps = {
@@ -47,7 +49,11 @@ function VitalInfo({
   };
 
   return (
-    <VitalsCardDiscoverQuery location={location} vitals={vitals}>
+    <VitalsCardDiscoverQuery
+      location={location}
+      vitals={vitals}
+      queryExtras={queryExtras}
+    >
       {({isLoading: loading, vitalsData}) => (
         <VitalBar
           {...contentCommonProps}

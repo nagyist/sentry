@@ -6,11 +6,11 @@ import SentryAppAvatar from 'sentry/components/avatar/sentryAppAvatar';
 import IdBadge from 'sentry/components/idBadge';
 import {IconInput, IconLink, IconSettings} from 'sentry/icons';
 import PluginIcon from 'sentry/plugins/components/pluginIcon';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import highlightFuseMatches from 'sentry/utils/highlightFuseMatches';
 import {useParams} from 'sentry/utils/useParams';
 
-import {Result} from './sources/types';
+import type {Result} from './sources/types';
 
 type Props = {
   highlighted: boolean;
@@ -37,6 +37,10 @@ function renderResultType({resultType, model}: Result['item']) {
   }
 }
 
+function HighlightedMarker(p: React.ComponentProps<typeof HighlightMarker>) {
+  return <HighlightMarker data-test-id="highlight" {...p} />;
+}
+
 function SearchResult({item, matches, highlighted}: Props) {
   const params = useParams<{orgId: string}>();
 
@@ -46,14 +50,8 @@ function SearchResult({item, matches, highlighted}: Props) {
     let {title, description} = item;
 
     if (matches) {
-      // TODO(ts) Type this better.
-      const HighlightedMarker = (p: any) => (
-        <HighlightMarker data-test-id="highlight" highlighted={highlighted} {...p} />
-      );
-
-      const matchedTitle = matches && matches.find(({key}) => key === 'title');
-      const matchedDescription =
-        matches && matches.find(({key}) => key === 'description');
+      const matchedTitle = matches?.find(({key}) => key === 'title');
+      const matchedDescription = matches?.find(({key}) => key === 'description');
 
       title = matchedTitle
         ? highlightFuseMatches(matchedTitle, HighlightedMarker)
@@ -136,6 +134,6 @@ const StyledPluginIcon = styled(PluginIcon)`
 const HighlightMarker = styled('mark')`
   padding: 0;
   background: transparent;
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   color: ${p => p.theme.active};
 `;

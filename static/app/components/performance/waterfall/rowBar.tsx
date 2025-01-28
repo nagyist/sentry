@@ -1,19 +1,17 @@
 import styled from '@emotion/styled';
 
-import {
-  ROW_HEIGHT,
-  ROW_PADDING,
-  SpanBarType,
-} from 'sentry/components/performance/waterfall/constants';
-import {DurationDisplay} from 'sentry/components/performance/waterfall/types';
+import type {SpanBarType} from 'sentry/components/performance/waterfall/constants';
+import {ROW_HEIGHT, ROW_PADDING} from 'sentry/components/performance/waterfall/constants';
+import type {DurationDisplay} from 'sentry/components/performance/waterfall/types';
 import {
   getDurationPillAlignment,
-  getDurationPillColours,
+  getDurationPillColors,
   getHatchPattern,
 } from 'sentry/components/performance/waterfall/utils';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 export const RowRectangle = styled('div')<{
+  isHidden?: boolean;
   spanBarType?: SpanBarType;
 }>`
   position: absolute;
@@ -22,7 +20,7 @@ export const RowRectangle = styled('div')<{
   min-width: 1px;
   user-select: none;
   transition: border-color 0.15s ease-in-out;
-  ${p => getHatchPattern(p.spanBarType, p.theme)}
+  ${p => !p.isHidden && getHatchPattern(p.spanBarType, p.theme)}
 `;
 
 export const DurationPill = styled('div')<{
@@ -44,7 +42,7 @@ export const DurationPill = styled('div')<{
   line-height: 1;
 
   ${getDurationPillAlignment}
-  ${getDurationPillColours}
+  ${getDurationPillColors}
 
   @media (max-width: ${p => p.theme.breakpoints.medium}) {
     font-size: 10px;

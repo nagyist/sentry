@@ -1,4 +1,3 @@
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {
@@ -7,16 +6,20 @@ import {
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
 import {disablePlugin, enablePlugin} from 'sentry/actionCreators/plugins';
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import ExternalLink from 'sentry/components/links/externalLink';
 import PluginConfig from 'sentry/components/pluginConfig';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Plugin, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Plugin} from 'sentry/types/integrations';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import {trackIntegrationAnalytics} from 'sentry/utils/integrationUtil';
 import withPlugins from 'sentry/utils/withPlugins';
-import AsyncView from 'sentry/views/asyncView';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 
 type Props = {
@@ -25,11 +28,11 @@ type Props = {
     plugins: Plugin[];
   };
   project: Project;
-} & RouteComponentProps<{orgId: string; pluginId: string; projectId: string}, {}>;
+} & RouteComponentProps<{pluginId: string; projectId: string}, {}>;
 
 type State = {
   pluginDetails?: Plugin;
-} & AsyncView['state'];
+} & DeprecatedAsyncComponent['state'];
 
 /**
  * There are currently two sources of truths for plugin details:
@@ -40,7 +43,7 @@ type State = {
  *    The more correct way would be to pass `config` to PluginConfig and use plugin from
  *    PluginsStore
  */
-class ProjectPluginDetails extends AsyncView<Props, State> {
+class ProjectPluginDetails extends DeprecatedAsyncComponent<Props, State> {
   componentDidUpdate(prevProps: Props, prevState: State) {
     super.componentDidUpdate(prevProps, prevState);
     if (prevProps.params.pluginId !== this.props.params.pluginId) {
@@ -48,6 +51,7 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
     }
   }
   componentDidMount() {
+    super.componentDidMount();
     this.recordDetailsViewed();
   }
 
@@ -62,15 +66,7 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
     });
   }
 
-  getTitle() {
-    const {plugin} = this.state;
-    if (plugin && plugin.name) {
-      return plugin.name;
-    }
-    return 'Sentry';
-  }
-
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const {organization} = this.props;
     const {projectId, pluginId} = this.props.params;
     return [
@@ -81,7 +77,7 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
     ];
   }
 
-  trimSchema(value) {
+  trimSchema(value: any) {
     return value.split('//')[1];
   }
 
@@ -117,12 +113,14 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
   };
 
   handleEnable = () => {
-    enablePlugin(this.props.params);
+    const {organization, params} = this.props;
+    enablePlugin({...params, orgId: organization.slug});
     this.analyticsChangeEnableStatus(true);
   };
 
   handleDisable = () => {
-    disablePlugin(this.props.params);
+    const {organization, params} = this.props;
+    disablePlugin({...params, orgId: organization.slug});
     this.analyticsChangeEnableStatus(false);
   };
 
@@ -142,12 +140,11 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
     const {pluginDetails} = this.state;
     const {plugins} = this.props;
 
-    const plugin =
-      plugins &&
-      plugins.plugins &&
-      plugins.plugins.find(({slug}) => slug === this.props.params.pluginId);
+    const plugin = plugins?.plugins?.find(
+      ({slug}) => slug === this.props.params.pluginId
+    );
 
-    return plugin ? plugin.enabled : pluginDetails && pluginDetails.enabled;
+    return plugin ? plugin.enabled : pluginDetails?.enabled;
   }
 
   renderActions() {
@@ -182,7 +179,7 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
   }
 
   renderBody() {
-    const {organization, project} = this.props;
+    const {project} = this.props;
     const {pluginDetails} = this.state;
     if (!pluginDetails) {
       return null;
@@ -190,13 +187,13 @@ class ProjectPluginDetails extends AsyncView<Props, State> {
 
     return (
       <div>
+        <SentryDocumentTitle title={pluginDetails.name} projectSlug={project.slug} />
         <SettingsPageHeader title={pluginDetails.name} action={this.renderActions()} />
         <div className="row">
           <div className="col-md-7">
             <PluginConfig
-              organization={organization}
               project={project}
-              data={pluginDetails}
+              plugin={pluginDetails}
               enabled={this.getEnabled()}
               onDisablePlugin={this.handleDisable}
             />

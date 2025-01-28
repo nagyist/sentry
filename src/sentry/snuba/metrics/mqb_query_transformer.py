@@ -1,29 +1,28 @@
 import inspect
 
-from snuba_sdk import AliasedExpression, Column, Condition, Function, Granularity, Op
+from snuba_sdk import AliasedExpression, BooleanCondition, Column, Function, Granularity, Op
 from snuba_sdk.query import Query
 
-from sentry.api.utils import InvalidParams
-from sentry.sentry_metrics.configuration import UseCaseKey
-from sentry.snuba.metrics import (
-    FIELD_ALIAS_MAPPINGS,
-    FILTERABLE_TAGS,
-    OPERATIONS,
-    DerivedMetricException,
-    TransactionMRI,
-)
+from sentry.exceptions import InvalidParams
+from sentry.sentry_metrics.use_case_id_registry import UseCaseID
+from sentry.snuba.metrics import FIELD_ALIAS_MAPPINGS, OPERATIONS, DerivedMetricException
 from sentry.snuba.metrics.fields.base import DERIVED_OPS, metric_object_factory
-from sentry.snuba.metrics.query import MetricConditionField, MetricField, MetricGroupByField
+from sentry.snuba.metrics.naming_layer.mri import TransactionMRI
+from sentry.snuba.metrics.query import (
+    DeprecatingMetricsQuery,
+    MetricConditionField,
+    MetricField,
+    MetricGroupByField,
+)
 from sentry.snuba.metrics.query import MetricOrderByField
 from sentry.snuba.metrics.query import MetricOrderByField as MetricOrderBy
-from sentry.snuba.metrics.query import MetricsQuery
 from sentry.snuba.metrics.query_builder import FUNCTION_ALLOWLIST
 
 TEAM_KEY_TRANSACTION_OP = "team_key_transaction"
 
 
 class MQBQueryTransformationException(Exception):
-    ...
+    pass
 
 
 def _get_derived_op_metric_field_from_snuba_function(function: Function):
@@ -31,7 +30,7 @@ def _get_derived_op_metric_field_from_snuba_function(function: Function):
         raise MQBQueryTransformationException(
             "The first parameter of a function should be a column of the metric MRI"
         )
-    default_args_for_snql_func = {"aggregate_filter", "org_id", "alias"}
+    default_args_for_snql_func = {"aggregate_filter", "org_id", "alias", "use_case_id"}
 
     metric_field_params = {}
     function_params = function.parameters[1:]
@@ -96,6 +95,7 @@ def _transform_select(query_select):
                 )
         else:
             raise MQBQueryTransformationException(f"Unsupported select field {select_field}")
+
     return select
 
 
@@ -175,14 +175,20 @@ def _transform_groupby(query_groupby):
     return mq_groupby if len(mq_groupby) > 0 else None, include_series, interval
 
 
-def _get_mq_dict_params_from_where(query_where):
+def _get_mq_dict_params_and_conditions_from(conditions):
     mq_dict = {}
-    where = []
-    for condition in query_where:
-        if not isinstance(condition, Condition):
-            # Currently Boolean Condition is not supported
-            raise MQBQueryTransformationException("Unsupported condition type in where clause")
-        if isinstance(condition.lhs, Column):
+    converted_conditions = []
+
+    for condition in conditions:
+        if isinstance(condition, BooleanCondition):
+            inner_mq_dict, inner_conditions = _get_mq_dict_params_and_conditions_from(
+                condition.conditions
+            )
+            mq_dict.update(inner_mq_dict)
+            converted_conditions.append(
+                BooleanCondition(op=condition.op, conditions=inner_conditions)
+            )
+        elif isinstance(condition.lhs, Column):
             if condition.lhs.name == "project_id":
                 mq_dict["project_ids"] = condition.rhs
             elif condition.lhs.name == "org_id":
@@ -192,17 +198,17 @@ def _get_mq_dict_params_from_where(query_where):
                     mq_dict["start"] = condition.rhs
                 elif condition.op == Op.LT:
                     mq_dict["end"] = condition.rhs
-            elif condition.lhs.name in FILTERABLE_TAGS:
-                where.append(condition)
+            # In the transformer we allow all query values but the actual check will be performed by the execution
+            # engine of the metrics layer.
             else:
-                raise MQBQueryTransformationException(f"Unsupported column for where {condition}")
+                converted_conditions.append(condition)
         elif isinstance(condition.lhs, Function):
             if condition.lhs.function in DERIVED_OPS:
                 if not DERIVED_OPS[condition.lhs.function].can_filter:
                     raise MQBQueryTransformationException(
                         f"Cannot filter by function {condition.lhs.function}"
                     )
-                where.append(
+                converted_conditions.append(
                     MetricConditionField(
                         lhs=_get_derived_op_metric_field_from_snuba_function(condition.lhs),
                         op=condition.op,
@@ -210,15 +216,15 @@ def _get_mq_dict_params_from_where(query_where):
                     )
                 )
             elif condition.lhs.function in FUNCTION_ALLOWLIST:
-                where.append(condition)
+                converted_conditions.append(condition)
             else:
                 raise MQBQueryTransformationException(
                     f"Unsupported function '{condition.lhs.function}' in where"
                 )
         else:
-            where.append(condition)
-    mq_dict["where"] = where if len(where) > 0 else None
-    return mq_dict
+            converted_conditions.append(condition)
+
+    return mq_dict, converted_conditions
 
 
 def _transform_orderby(query_orderby):
@@ -284,7 +290,7 @@ def _derive_mri_to_apply(project_ids, select, orderby):
             for select_field in select:
                 if select_field.op != TEAM_KEY_TRANSACTION_OP:
                     expr = metric_object_factory(select_field.op, select_field.metric_mri)
-                    entity = expr.get_entity(project_ids, use_case_id=UseCaseKey.PERFORMANCE)
+                    entity = expr.get_entity(project_ids, use_case_id=UseCaseID.TRANSACTIONS)
                     if isinstance(entity, str):
                         entities.add(entity)
         else:
@@ -300,7 +306,7 @@ def _derive_mri_to_apply(project_ids, select, orderby):
                         expr = metric_object_factory(
                             orderby_field.field.op, orderby_field.field.metric_mri
                         )
-                        entity = expr.get_entity(project_ids, use_case_id=UseCaseKey.PERFORMANCE)
+                        entity = expr.get_entity(project_ids, use_case_id=UseCaseID.TRANSACTIONS)
                         if isinstance(entity, str):
                             entities.add(entity)
 
@@ -404,6 +410,8 @@ def _transform_team_key_transaction_in_orderby(mri_to_apply, orderby):
 
 
 def _transform_team_key_transaction_fake_mri(mq_dict):
+    if "project_ids" not in mq_dict:
+        raise MQBQueryTransformationException("Missing project_id in query")
     mri_to_apply = _derive_mri_to_apply(
         mq_dict["project_ids"], mq_dict["select"], mq_dict["orderby"]
     )
@@ -416,19 +424,13 @@ def _transform_team_key_transaction_fake_mri(mq_dict):
     }
 
 
-def transform_mqb_query_to_metrics_query(query: Query) -> MetricsQuery:
-    # Validate that we only support this transformation for the generic_metrics dataset
-    if query.match.name not in {"generic_metrics_distributions", "generic_metrics_sets"}:
-        raise MQBQueryTransformationException(
-            f"Unsupported entity name for {query.match.name} MQB to MetricsQuery " f"Transformation"
-        )
-
-    if query.having:
-        raise MQBQueryTransformationException(
-            "Having clauses are not supported by the metrics layer"
-        )
-    # Handle groupby
+def transform_mqb_query_to_metrics_query(
+    query: Query,
+    is_alerts_query: bool = False,
+) -> DeprecatingMetricsQuery:
     groupby, include_series, interval = _transform_groupby(query.groupby)
+
+    where_mq_dict, where_conditions = _get_mq_dict_params_and_conditions_from(query.where)
 
     mq_dict = {
         "select": _transform_select(query.select),
@@ -440,10 +442,13 @@ def transform_mqb_query_to_metrics_query(query: Query) -> MetricsQuery:
         "granularity": query.granularity if query.granularity is not None else Granularity(3600),
         "orderby": _transform_orderby(query.orderby),
         "interval": interval,
-        **_get_mq_dict_params_from_where(query.where),
+        "is_alerts_query": is_alerts_query,
+        "having": query.having,
+        "where": where_conditions,
+        **where_mq_dict,
     }
 
     # This code is just an edge case specific for the team_key_transaction derived operation.
     mq_dict.update(**_transform_team_key_transaction_fake_mri(mq_dict))
 
-    return MetricsQuery(**mq_dict)
+    return DeprecatingMetricsQuery(**mq_dict)

@@ -1,7 +1,6 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import {useTheme} from '@emotion/react';
-import {Query} from 'history';
+import type {Query} from 'history';
 
 import EventsRequest from 'sentry/components/charts/eventsRequest';
 import {HeaderTitleLegend} from 'sentry/components/charts/styles';
@@ -9,13 +8,15 @@ import {getInterval, getSeriesSelection} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t, tct} from 'sentry/locale';
-import {OrganizationSummary} from 'sentry/types';
+import type {OrganizationSummary} from 'sentry/types/organization';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
+import {parseFunction} from 'sentry/utils/discover/fields';
 import useApi from 'sentry/utils/useApi';
 import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import useRouter from 'sentry/utils/useRouter';
 
-import {ViewProps} from '../../../types';
+import type {ViewProps} from '../../../types';
 import {
   SPAN_OPERATION_BREAKDOWN_FILTER_TO_FIELD,
   SpanOperationBreakdownFilter,
@@ -28,15 +29,10 @@ type Props = ViewProps & {
   organization: OrganizationSummary;
   queryExtra: Query;
   withoutZerofill: boolean;
+  queryExtras?: Record<string, string>;
 };
 
-enum DurationFunctionField {
-  P50 = 'p50',
-  P75 = 'p75',
-  P95 = 'p95',
-  P99 = 'p99',
-  p100 = 'p100',
-}
+const yAxisValues = ['p50', 'p75', 'p95', 'p99', 'p100', 'avg'];
 
 /**
  * Fetch and render a stacked area chart that shows duration percentiles over
@@ -53,7 +49,9 @@ function DurationChart({
   withoutZerofill,
   start: propsStart,
   end: propsEnd,
+  queryExtras,
 }: Props) {
+  const navigate = useNavigate();
   const router = useRouter();
   const location = useLocation();
   const api = useApi();
@@ -75,7 +73,7 @@ function DurationChart({
       },
     };
 
-    browserHistory.push(to);
+    navigate(to);
   }
 
   const start = propsStart ? getUtcToLocalDateObject(propsStart) : null;
@@ -111,11 +109,12 @@ function DurationChart({
     interval: getInterval(datetimeSelection, 'high'),
   };
 
-  const parameter = SPAN_OPERATION_BREAKDOWN_FILTER_TO_FIELD[currentFilter] ?? '';
+  const parameter =
+    SPAN_OPERATION_BREAKDOWN_FILTER_TO_FIELD[currentFilter] ?? 'transaction.duration';
 
   const header = (
     <HeaderTitleLegend>
-      {currentFilter === SpanOperationBreakdownFilter.None
+      {currentFilter === SpanOperationBreakdownFilter.NONE
         ? t('Duration Breakdown')
         : tct('Span Operation Breakdown - [operationName]', {
             operationName: currentFilter,
@@ -130,7 +129,7 @@ function DurationChart({
     </HeaderTitleLegend>
   );
 
-  const yAxis = Object.values(DurationFunctionField).map(v => `${v}(${parameter})`);
+  const yAxis = yAxisValues.map(v => `${v}(${parameter})`);
 
   return (
     <Fragment>
@@ -144,17 +143,25 @@ function DurationChart({
         partial
         withoutZerofill={withoutZerofill}
         referrer="api.performance.transaction-summary.duration-chart"
+        queryExtras={queryExtras}
       >
-        {({results, errored, loading, reloading, timeframe: timeFrame}) => (
-          <Content
-            series={results}
-            errored={errored}
-            loading={loading}
-            reloading={reloading}
-            timeFrame={timeFrame}
-            {...contentCommonProps}
-          />
-        )}
+        {({results, errored, loading, reloading, timeframe: timeFrame}) => {
+          const stripParamsForLegend = (seriesResults: any) =>
+            seriesResults?.map((series: any) => ({
+              ...series,
+              seriesName: `${parseFunction(series.seriesName)?.name}()`,
+            }));
+          return (
+            <Content
+              series={stripParamsForLegend(results)}
+              errored={errored}
+              loading={loading}
+              reloading={reloading}
+              timeFrame={timeFrame}
+              {...contentCommonProps}
+            />
+          );
+        }}
       </EventsRequest>
     </Fragment>
   );

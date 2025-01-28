@@ -1,8 +1,8 @@
 import styled from '@emotion/styled';
 
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconCheckmark, IconCircle, IconFlag} from 'sentry/icons';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 type Props = {
   status: 'error' | 'success' | 'empty';
@@ -31,7 +31,7 @@ function PackageStatus({status, tooltip}: Props) {
   return (
     <StyledTooltip
       title={tooltip}
-      disabled={!(tooltip && tooltip.length)}
+      disabled={!tooltip?.length}
       containerDisplayMode="inline-flex"
     >
       <PackageStatusIcon>{icon}</PackageStatusIcon>

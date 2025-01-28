@@ -1,8 +1,9 @@
-import {browserHistory} from 'react-router';
-import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
 
 import {addMetricsDataMock} from 'sentry-test/performance/addMetricsDataMock';
 import {initializeData} from 'sentry-test/performance/initializePerformanceData';
+import {makeTestQueryClient} from 'sentry-test/queryClient';
 import {
   act,
   render,
@@ -14,6 +15,7 @@ import {
 
 import TeamStore from 'sentry/stores/teamStore';
 import {MetricsCardinalityProvider} from 'sentry/utils/performance/contexts/metricsCardinality';
+import {QueryClientProvider} from 'sentry/utils/queryClient';
 import {OrganizationContext} from 'sentry/views/organizationContext';
 import {generatePerformanceEventView} from 'sentry/views/performance/data';
 import {PerformanceLanding} from 'sentry/views/performance/landing';
@@ -22,15 +24,18 @@ import {LandingDisplayField} from 'sentry/views/performance/landing/utils';
 
 const searchHandlerMock = jest.fn();
 
-const WrappedComponent = ({data, withStaticFilters = false}) => {
-  const eventView = generatePerformanceEventView(data.router.location, data.projects, {
-    withStaticFilters,
-  });
-
-  const client = new QueryClient();
+function WrappedComponent({data, withStaticFilters = false}: any) {
+  const eventView = generatePerformanceEventView(
+    data.router.location,
+    data.projects,
+    {
+      withStaticFilters,
+    },
+    data.organization
+  );
 
   return (
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={makeTestQueryClient()}>
       <OrganizationContext.Provider value={data.organization}>
         <MetricsCardinalityProvider
           location={data.router.location}
@@ -53,7 +58,7 @@ const WrappedComponent = ({data, withStaticFilters = false}) => {
       </OrganizationContext.Provider>
     </QueryClientProvider>
   );
-};
+}
 
 describe('Performance > Landing > Index', function () {
   let eventStatsMock: jest.Mock;
@@ -62,8 +67,6 @@ describe('Performance > Landing > Index', function () {
 
   act(() => void TeamStore.loadInitialData([], false, null));
   beforeEach(function () {
-    // @ts-ignore no-console
-    // eslint-disable-next-line no-console
     jest.spyOn(console, 'error').mockImplementation(jest.fn());
 
     MockApiClient.addMockResponse({
@@ -71,7 +74,7 @@ describe('Performance > Landing > Index', function () {
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/prompts-activity/',
+      url: '/organizations/org-slug/prompts-activity/',
       body: {},
     });
     MockApiClient.addMockResponse({
@@ -134,11 +137,8 @@ describe('Performance > Landing > Index', function () {
 
   afterEach(function () {
     MockApiClient.clearMockResponses();
-    jest.resetAllMocks();
-
-    // @ts-ignore no-console
-    // eslint-disable-next-line no-console
-    console.error.mockRestore();
+    jest.clearAllMocks();
+    jest.restoreAllMocks();
 
     if (wrapper) {
       wrapper.unmount();
@@ -149,29 +149,9 @@ describe('Performance > Landing > Index', function () {
   it('renders basic UI elements', function () {
     const data = initializeData();
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
 
     expect(screen.getByTestId('performance-landing-v3')).toBeInTheDocument();
-  });
-
-  it('renders frontend pageload view', function () {
-    const data = initializeData({
-      query: {landingDisplay: LandingDisplayField.FRONTEND_PAGELOAD},
-    });
-
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
-
-    expect(screen.getByTestId('frontend-pageload-view')).toBeInTheDocument();
-    expect(screen.getByTestId('performance-table')).toBeInTheDocument();
-
-    const titles = screen.getAllByTestId('performance-widget-title');
-    expect(titles).toHaveLength(5);
-
-    expect(titles[0]).toHaveTextContent('Worst LCP Web Vitals');
-    expect(titles[1]).toHaveTextContent('Worst FCP Web Vitals');
-    expect(titles[2]).toHaveTextContent('p75 LCP');
-    expect(titles[3]).toHaveTextContent('LCP Distribution');
-    expect(titles[4]).toHaveTextContent('FCP Distribution');
   });
 
   it('renders frontend other view', function () {
@@ -179,7 +159,7 @@ describe('Performance > Landing > Index', function () {
       query: {landingDisplay: LandingDisplayField.FRONTEND_OTHER},
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
     expect(screen.getByTestId('performance-table')).toBeInTheDocument();
   });
 
@@ -188,7 +168,7 @@ describe('Performance > Landing > Index', function () {
       query: {landingDisplay: LandingDisplayField.BACKEND},
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
     expect(screen.getByTestId('performance-table')).toBeInTheDocument();
   });
 
@@ -197,12 +177,12 @@ describe('Performance > Landing > Index', function () {
       query: {landingDisplay: LandingDisplayField.MOBILE},
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
     expect(screen.getByTestId('performance-table')).toBeInTheDocument();
   });
 
   it('renders react-native table headers in mobile view', async function () {
-    const project = TestStubs.Project({platform: 'react-native'});
+    const project = ProjectFixture({platform: 'react-native'});
     const projects = [project];
     const data = initializeData({
       query: {landingDisplay: LandingDisplayField.MOBILE},
@@ -210,7 +190,7 @@ describe('Performance > Landing > Index', function () {
       projects,
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
 
     expect(await screen.findByTestId('performance-table')).toBeInTheDocument();
     expect(screen.getByTestId('grid-editable')).toBeInTheDocument();
@@ -218,7 +198,7 @@ describe('Performance > Landing > Index', function () {
 
     expect(columnHeaders).toHaveLength(REACT_NATIVE_COLUMN_TITLES.length);
     for (const [index, title] of columnHeaders.entries()) {
-      expect(title).toHaveTextContent(REACT_NATIVE_COLUMN_TITLES[index]);
+      expect(title).toHaveTextContent(REACT_NATIVE_COLUMN_TITLES[index]!.title);
     }
   });
 
@@ -227,7 +207,7 @@ describe('Performance > Landing > Index', function () {
       query: {landingDisplay: LandingDisplayField.ALL},
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
 
     expect(await screen.findByTestId('performance-table')).toBeInTheDocument();
 
@@ -239,39 +219,40 @@ describe('Performance > Landing > Index', function () {
       expect.objectContaining({
         query: expect.objectContaining({
           environment: [],
-          interval: '15m',
+          interval: '1h',
           partial: '1',
           project: [],
-          query: 'transaction.duration:<15m event.type:transaction',
+          query: 'event.type:transaction',
           referrer: 'api.performance.generic-widget-chart.user-misery-area',
-          statsPeriod: '48h',
+          statsPeriod: '14d',
           yAxis: ['user_misery()', 'tpm()', 'failure_rate()'],
         }),
       })
     );
 
-    expect(eventsMock).toHaveBeenCalledTimes(3);
+    expect(eventsMock).toHaveBeenCalledTimes(2);
 
     const titles = await screen.findAllByTestId('performance-widget-title');
     expect(titles).toHaveLength(5);
 
-    expect(titles.at(0)).toHaveTextContent('Most Related Issues');
+    expect(titles.at(0)).toHaveTextContent('Most Regressed');
     expect(titles.at(1)).toHaveTextContent('Most Improved');
     expect(titles.at(2)).toHaveTextContent('User Misery');
     expect(titles.at(3)).toHaveTextContent('Transactions Per Minute');
     expect(titles.at(4)).toHaveTextContent('Failure Rate');
   });
 
-  it('Can switch between landing displays', function () {
+  it('Can switch between landing displays', async function () {
+    const router = RouterFixture();
     const data = initializeData({
-      query: {landingDisplay: LandingDisplayField.FRONTEND_PAGELOAD, abc: '123'},
+      query: {landingDisplay: LandingDisplayField.FRONTEND_OTHER, abc: '123'},
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
-    expect(screen.getByTestId('frontend-pageload-view')).toBeInTheDocument();
-    userEvent.click(screen.getByRole('tab', {name: 'All Transactions'}));
+    wrapper = render(<WrappedComponent data={data} />, {router});
+    expect(screen.getByTestId('frontend-other-view')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', {name: 'All Transactions'}));
 
-    expect(browserHistory.push).toHaveBeenNthCalledWith(
+    expect(router.push).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         pathname: data.location.pathname,
@@ -282,46 +263,41 @@ describe('Performance > Landing > Index', function () {
 
   it('Updating projects switches performance view', function () {
     const data = initializeData({
-      query: {landingDisplay: LandingDisplayField.FRONTEND_PAGELOAD},
+      query: {landingDisplay: LandingDisplayField.FRONTEND_OTHER},
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+    wrapper = render(<WrappedComponent data={data} />);
 
-    expect(screen.getByTestId('frontend-pageload-view')).toBeInTheDocument();
+    expect(screen.getByTestId('frontend-other-view')).toBeInTheDocument();
 
     const updatedData = initializeData({
-      projects: [TestStubs.Project({id: 123, platform: 'unknown'})],
+      projects: [ProjectFixture({id: '123', platform: undefined})],
       selectedProject: 123,
     });
 
-    wrapper.rerender(<WrappedComponent data={updatedData} />, data.routerContext);
+    wrapper.rerender(<WrappedComponent data={updatedData} />);
 
     expect(screen.getByTestId('all-transactions-view')).toBeInTheDocument();
   });
 
   it('View correctly defaults based on project without url param', function () {
     const data = initializeData({
-      projects: [TestStubs.Project({id: 99, platform: 'javascript-react'})],
+      projects: [ProjectFixture({id: '99', platform: 'javascript-react'})],
       selectedProject: 99,
     });
 
-    wrapper = render(<WrappedComponent data={data} />, data.routerContext);
-    expect(screen.getByTestId('frontend-pageload-view')).toBeInTheDocument();
+    wrapper = render(<WrappedComponent data={data} />);
+    expect(screen.getByTestId('frontend-other-view')).toBeInTheDocument();
   });
 
   describe('With transaction search feature', function () {
     it('does not search for empty string transaction', async function () {
-      const data = initializeData({
-        features: [
-          'performance-transaction-name-only-search',
-          'performance-transaction-name-only-search-indexed',
-        ],
-      });
+      const data = initializeData();
 
-      render(<WrappedComponent data={data} withStaticFilters />, data.routerContext);
+      render(<WrappedComponent data={data} withStaticFilters />);
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-      userEvent.type(screen.getByPlaceholderText('Search Transactions'), '{enter}');
+      await waitForElementToBeRemoved(() => screen.queryAllByTestId('loading-indicator'));
+      await userEvent.type(screen.getByPlaceholderText('Search Transactions'), '{enter}');
       expect(searchHandlerMock).toHaveBeenCalledWith('', 'transactionsOnly');
     });
 
@@ -329,31 +305,22 @@ describe('Performance > Landing > Index', function () {
       addMetricsDataMock();
 
       const data = initializeData({
-        features: ['performance-transaction-name-only-search'],
         query: {
           field: 'test',
         },
       });
 
-      wrapper = render(
-        <WrappedComponent data={data} withStaticFilters />,
-        data.routerContext
-      );
+      wrapper = render(<WrappedComponent data={data} withStaticFilters />);
 
       expect(await screen.findByTestId('transaction-search-bar')).toBeInTheDocument();
     });
 
     it('extracts free text from the query', async function () {
-      const data = initializeData({
-        features: [
-          'performance-transaction-name-only-search',
-          'performance-transaction-name-only-search-indexed',
-        ],
-      });
+      const data = initializeData();
 
-      wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+      wrapper = render(<WrappedComponent data={data} />);
 
-      await waitForElementToBeRemoved(() => screen.queryByTestId('loading-indicator'));
+      await waitForElementToBeRemoved(() => screen.queryAllByTestId('loading-indicator'));
 
       expect(await screen.findByPlaceholderText('Search Transactions')).toHaveValue('');
     });
@@ -370,9 +337,9 @@ describe('Performance > Landing > Index', function () {
         ],
       });
 
-      wrapper = render(<WrappedComponent data={data} />, data.routerContext);
+      wrapper = render(<WrappedComponent data={data} />);
       const titles = await screen.findAllByTestId('performance-widget-title');
-      expect(titles.at(0)).toHaveTextContent('Span Operations');
+      expect(titles.at(0)).toHaveTextContent('Most Regressed');
     });
   });
 });

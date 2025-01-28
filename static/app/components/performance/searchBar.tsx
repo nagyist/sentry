@@ -1,33 +1,50 @@
 import {useCallback, useRef, useState} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 import debounce from 'lodash/debounce';
 
+import {getSearchGroupWithItemMarkedActive} from 'sentry/components/deprecatedSmartSearchBar/utils';
 import BaseSearchBar from 'sentry/components/searchBar';
-import {getSearchGroupWithItemMarkedActive} from 'sentry/components/smartSearchBar/utils';
 import {DEFAULT_DEBOUNCE_DURATION} from 'sentry/constants';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import type EventView from 'sentry/utils/discover/eventView';
 import {doDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
+import {parsePeriodToHours} from 'sentry/utils/duration/parsePeriodToHours';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import useApi from 'sentry/utils/useApi';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import useOnClickOutside from 'sentry/utils/useOnClickOutside';
 import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
 
-import SearchDropdown from '../smartSearchBar/searchDropdown';
-import {ItemType, SearchGroup} from '../smartSearchBar/types';
+import SearchDropdown from '../deprecatedSmartSearchBar/searchDropdown';
+import type {SearchGroup} from '../deprecatedSmartSearchBar/types';
+import {ItemType} from '../deprecatedSmartSearchBar/types';
+
+const TRANSACTION_SEARCH_PERIOD = '14d';
 
 export type SearchBarProps = {
   eventView: EventView;
   onSearch: (query: string) => void;
   organization: Organization;
   query: string;
+  additionalConditions?: MutableSearch;
+  className?: string;
+  placeholder?: string;
 };
 
 function SearchBar(props: SearchBarProps) {
-  const {organization, eventView: _eventView, onSearch, query: searchQuery} = props;
+  const {
+    organization,
+    eventView: _eventView,
+    onSearch,
+    query: searchQuery,
+    className,
+    placeholder,
+    additionalConditions,
+  } = props;
 
+  const navigate = useNavigate();
   const [searchResults, setSearchResults] = useState<SearchGroup[]>([]);
   const transactionCount = searchResults[0]?.children?.length || 0;
   const [highlightedItemIndex, setHighlightedItemIndex] = useState(-1);
@@ -44,9 +61,9 @@ function SearchBar(props: SearchBarProps) {
 
   const url = `/organizations/${organization.slug}/events/`;
 
-  const projectIdStrings = (eventView.project as Readonly<number>[])?.map(String);
+  const projectIdStrings = (eventView.project as Array<Readonly<number>>)?.map(String);
 
-  const handleSearchChange = query => {
+  const handleSearchChange = (query: any) => {
     setSearchString(query);
 
     if (query.length === 0) {
@@ -80,12 +97,12 @@ function SearchBar(props: SearchBarProps) {
       isDropdownOpen &&
       transactionCount > 0
     ) {
-      const currentHighlightedItem = searchResults[0].children[highlightedItemIndex];
+      const currentHighlightedItem = searchResults[0]!.children[highlightedItemIndex];
       const nextHighlightedItemIndex =
         (highlightedItemIndex + transactionCount + (key === 'ArrowUp' ? -1 : 1)) %
         transactionCount;
       setHighlightedItemIndex(nextHighlightedItemIndex);
-      const nextHighlightedItem = searchResults[0].children[nextHighlightedItemIndex];
+      const nextHighlightedItem = searchResults[0]!.children[nextHighlightedItemIndex];
 
       let newSearchResults = searchResults;
       if (currentHighlightedItem) {
@@ -115,7 +132,7 @@ function SearchBar(props: SearchBarProps) {
       if (currentItem?.value) {
         handleChooseItem(currentItem.value);
       } else {
-        handleSearch(searchString);
+        handleSearch(searchString, true);
       }
     }
   };
@@ -126,7 +143,7 @@ function SearchBar(props: SearchBarProps) {
       async query => {
         try {
           setLoading(true);
-          const conditions = new MutableSearch('');
+          const conditions = additionalConditions?.copy() ?? new MutableSearch('');
           conditions.addFilterValues('transaction', [wrapQueryInWildcards(query)], false);
           conditions.addFilterValues('event.type', ['transaction']);
 
@@ -134,6 +151,15 @@ function SearchBar(props: SearchBarProps) {
           if (Object.keys(api.activeRequests).length) {
             api.clear();
           }
+          const parsedPeriodHours = eventView.statsPeriod
+            ? parsePeriodToHours(eventView.statsPeriod)
+            : 0;
+          const parsedDefaultHours = parsePeriodToHours(TRANSACTION_SEARCH_PERIOD);
+
+          const statsPeriod =
+            parsedDefaultHours > parsedPeriodHours
+              ? TRANSACTION_SEARCH_PERIOD
+              : eventView.statsPeriod;
 
           const [results] = await doDiscoverQuery<{
             data: DataItem[];
@@ -142,7 +168,7 @@ function SearchBar(props: SearchBarProps) {
             project: projectIdStrings,
             sort: '-count()',
             query: conditions.formatString(),
-            statsPeriod: eventView.statsPeriod,
+            statsPeriod,
             referrer: 'api.performance.transaction-name-search-bar',
           });
 
@@ -181,7 +207,7 @@ function SearchBar(props: SearchBarProps) {
 
   const handleChooseItem = (value: string) => {
     const item = decodeValueToItem(value);
-    handleSearch(item.transaction);
+    handleSearch(item.transaction, false);
   };
 
   const handleClickItemIcon = (value: string) => {
@@ -189,10 +215,13 @@ function SearchBar(props: SearchBarProps) {
     navigateToItemTransactionSummary(item);
   };
 
-  const handleSearch = (query: string) => {
+  const handleSearch = (query: string, asRawText: boolean) => {
     setSearchResults([]);
     setSearchString(query);
-    onSearch(query ? `transaction:${query}` : '');
+    query = new MutableSearch(query).formatString();
+
+    const fullQuery = asRawText ? query : `transaction:"${query}"`;
+    onSearch(query ? fullQuery : '');
     closeDropdown();
   };
 
@@ -209,13 +238,25 @@ function SearchBar(props: SearchBarProps) {
       query,
     });
 
-    browserHistory.push(next);
+    navigate(next);
+  };
+  const logDocsOpenedEvent = () => {
+    trackAnalytics('search.docs_opened', {
+      organization,
+      search_type: 'performance',
+      search_source: 'performance_landing',
+      query: props.query,
+    });
   };
 
   return (
-    <Container data-test-id="transaction-search-bar" ref={containerRef}>
+    <Container
+      className={className || ''}
+      data-test-id="transaction-search-bar"
+      ref={containerRef}
+    >
       <BaseSearchBar
-        placeholder={t('Search Transactions')}
+        placeholder={placeholder ?? t('Search Transactions')}
         onChange={handleSearchChange}
         onKeyDown={handleKeyDown}
         query={searchString}
@@ -228,6 +269,7 @@ function SearchBar(props: SearchBarProps) {
           items={searchResults}
           onClick={handleChooseItem}
           onIconClick={handleClickItemIcon}
+          onDocsOpen={() => logDocsOpenedEvent()}
         />
       )}
     </Container>
@@ -253,8 +295,8 @@ interface DataItem {
   'count()'?: number;
 }
 
-const wrapQueryInWildcards = (query: string) => {
-  if (!query.startsWith('* ')) {
+export const wrapQueryInWildcards = (query: string) => {
+  if (!query.startsWith('*')) {
     query = '*' + query;
   }
 

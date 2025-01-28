@@ -1,5 +1,5 @@
-import {PlatformKey} from 'sentry/data/platformCategories';
 import {t} from 'sentry/locale';
+import type {PlatformKey} from 'sentry/types/project';
 
 export enum SessionTerm {
   CRASHES = 'crashes',
@@ -29,7 +29,6 @@ export const sessionTerm = {
   [SessionTerm.ADOPTION]: t('Adoption'),
   [SessionTerm.ANR_RATE]: t('ANR Rate'),
   [SessionTerm.FOREGROUND_ANR_RATE]: t('Foreground ANR Rate'),
-  duration: t('Session Duration'),
   otherCrashed: t('Other Crashed'),
   otherAbnormal: t('Other Abnormal'),
   otherErrored: t('Other Errored'),
@@ -146,6 +145,7 @@ function getTermDescriptions(platform: PlatformKey | null) {
     case 'apple-ios':
     case 'minidump':
     case 'native':
+    case 'nintendo-switch':
       return {
         ...commonTermsDescription,
         ...desktopTermDescriptions,
@@ -178,5 +178,6 @@ export function getSessionTermDescription(
   term: SessionTerm,
   platform: PlatformKey | null
 ) {
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return getTermDescriptions(platform)[term];
 }

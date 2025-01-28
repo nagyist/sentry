@@ -1,34 +1,34 @@
 from __future__ import annotations
 
-from typing import Callable, Mapping, Optional, Union
+from collections.abc import Callable, Mapping
 
 import sentry_sdk
 from snuba_sdk import AliasedExpression, Column, Condition, Function, Op
 
 from sentry.api.event_search import SearchFilter
 from sentry.exceptions import IncompatibleMetricsQuery, InvalidSearchQuery
-from sentry.search.events import builder, constants, fields
-from sentry.search.events.datasets import field_aliases, filter_aliases
+from sentry.search.events import constants, fields
+from sentry.search.events.builder import metrics
+from sentry.search.events.datasets import field_aliases, filter_aliases, function_aliases
 from sentry.search.events.datasets.metrics import MetricsDatasetConfig
 from sentry.search.events.types import SelectType, WhereType
-from sentry.snuba.metrics.naming_layer.mri import TransactionMRI
+from sentry.snuba.metrics.naming_layer.mri import SessionMRI, SpanMRI, TransactionMRI
 from sentry.utils.numbers import format_grouped_length
 
 
 class MetricsLayerDatasetConfig(MetricsDatasetConfig):
-    def __init__(self, builder: builder.MetricsQueryBuilder):
+    def __init__(self, builder: metrics.MetricsQueryBuilder):
         self.builder = builder
 
     @property
     def search_filter_converter(
         self,
-    ) -> Mapping[str, Callable[[SearchFilter], Optional[WhereType]]]:
+    ) -> Mapping[str, Callable[[SearchFilter], WhereType | None]]:
         return {
             constants.PROJECT_ALIAS: self._project_slug_filter_converter,
             constants.PROJECT_NAME_ALIAS: self._project_slug_filter_converter,
             constants.EVENT_TYPE_ALIAS: self._event_type_converter,
             constants.TEAM_KEY_TRANSACTION_ALIAS: self._key_transaction_filter_converter,
-            "transaction.duration": self._duration_filter_converter,
             "transaction": self._transaction_filter_converter,
             "tags[transaction]": self._transaction_filter_converter,
             constants.TITLE_ALIAS: self._transaction_filter_converter,
@@ -41,19 +41,22 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
             constants.PROJECT_NAME_ALIAS: self._resolve_project_slug_alias,
             constants.TEAM_KEY_TRANSACTION_ALIAS: self._resolve_team_key_transaction_alias,
             constants.TITLE_ALIAS: self._resolve_title_alias,
+            constants.PROJECT_DOT_ID_ALIAS: lambda alias: AliasedExpression(
+                self.builder.resolve_column(constants.PROJECT_ID_ALIAS), alias
+            ),
         }
 
-    def resolve_metric(self, value: str) -> str:
+    def resolve_mri(self, value: str) -> Column:
         """Resolve to the MRI"""
         metric_mri = constants.METRICS_MAP.get(value)
         if metric_mri is None:
             # Maybe this is a custom measurment?
             for measurement in self.builder.custom_measurement_map:
                 if measurement["name"] == value and measurement["metric_id"] is not None:
-                    return measurement["mri_string"]
+                    return Column(measurement["mri"])
         if metric_mri is None:
             metric_mri = value
-        return metric_mri
+        return Column(metric_mri)
 
     @property
     def function_converter(self) -> Mapping[str, fields.MetricsFunction]:
@@ -85,7 +88,7 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                     snql_metric_layer=lambda args, alias: Function(
                         "avg",
                         [
-                            Column(self.resolve_metric(args["column"])),
+                            self.resolve_mri(args["column"]),
                         ],
                         alias,
                     ),
@@ -118,9 +121,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                             ),
                         ),
                     ],
-                    snql_metric_layer=lambda args, alias: self._resolve_percentile(
-                        args, alias, 0.5
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args, alias=alias, resolve_mri=self.resolve_mri, fixed_percentile=0.5
                     ),
+                    is_percentile=True,
                     result_type_fn=self.reflective_result_type(),
                     default_result_type="duration",
                 ),
@@ -134,9 +138,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                             ),
                         ),
                     ],
-                    snql_metric_layer=lambda args, alias: self._resolve_percentile(
-                        args, alias, 0.75
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args, alias=alias, resolve_mri=self.resolve_mri, fixed_percentile=0.75
                     ),
+                    is_percentile=True,
                     result_type_fn=self.reflective_result_type(),
                     default_result_type="duration",
                 ),
@@ -150,9 +155,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                             ),
                         ),
                     ],
-                    snql_metric_layer=lambda args, alias: self._resolve_percentile(
-                        args, alias, 0.90
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args, alias=alias, resolve_mri=self.resolve_mri, fixed_percentile=0.90
                     ),
+                    is_percentile=True,
                     result_type_fn=self.reflective_result_type(),
                     default_result_type="duration",
                 ),
@@ -166,9 +172,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                             ),
                         ),
                     ],
-                    snql_metric_layer=lambda args, alias: self._resolve_percentile(
-                        args, alias, 0.95
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args, alias=alias, resolve_mri=self.resolve_mri, fixed_percentile=0.95
                     ),
+                    is_percentile=True,
                     result_type_fn=self.reflective_result_type(),
                     default_result_type="duration",
                 ),
@@ -182,9 +189,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                             ),
                         ),
                     ],
-                    snql_metric_layer=lambda args, alias: self._resolve_percentile(
-                        args, alias, 0.99
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args, alias=alias, resolve_mri=self.resolve_mri, fixed_percentile=0.99
                     ),
+                    is_percentile=True,
                     result_type_fn=self.reflective_result_type(),
                     default_result_type="duration",
                 ),
@@ -198,7 +206,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                             ),
                         ),
                     ],
-                    snql_metric_layer=lambda args, alias: self._resolve_percentile(args, alias, 1),
+                    # Not marked as a percentile as this is equivalent to just `max`
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args, alias=alias, resolve_mri=self.resolve_mri, fixed_percentile=1
+                    ),
                     result_type_fn=self.reflective_result_type(),
                     default_result_type="duration",
                 ),
@@ -210,7 +221,7 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                     snql_metric_layer=lambda args, alias: Function(
                         "max",
                         [
-                            Column(self.resolve_metric(args["column"])),
+                            self.resolve_mri(args["column"]),
                         ],
                         alias,
                     ),
@@ -224,7 +235,21 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                     snql_metric_layer=lambda args, alias: Function(
                         "min",
                         [
-                            Column(self.resolve_metric(args["column"])),
+                            self.resolve_mri(args["column"]),
+                        ],
+                        alias,
+                    ),
+                    result_type_fn=self.reflective_result_type(),
+                ),
+                fields.MetricsFunction(
+                    "last",
+                    required_args=[
+                        fields.MetricArg("column"),
+                    ],
+                    snql_metric_layer=lambda args, alias: Function(
+                        "last",
+                        [
+                            self.resolve_mri(args["column"]),
                         ],
                         alias,
                     ),
@@ -238,11 +263,28 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                     snql_metric_layer=lambda args, alias: Function(
                         "sum",
                         [
-                            Column(self.resolve_metric(args["column"])),
+                            self.resolve_mri(args["column"]),
                         ],
                         alias,
                     ),
                     result_type_fn=self.reflective_result_type(),
+                ),
+                fields.MetricsFunction(
+                    "sumIf",
+                    required_args=[
+                        # Values domain restricted because of
+                        # sentry.snuba.entity_subscription.MetricsCountersEntitySubscription.get_snql_aggregations.
+                        fields.MetricArg("if_col", allowed_columns=["session.status"]),
+                        fields.SnQLStringArg("if_val", allowed_strings=["init", "crashed"]),
+                    ],
+                    snql_metric_layer=lambda args, alias: Function(
+                        "sum_if_column",
+                        # We use the metric mri specified in
+                        # sentry.snuba.entity_subscription.MetricsCountersEntitySubscription.metric_key.
+                        [Column(SessionMRI.RAW_SESSION.value), args["if_col"], args["if_val"]],
+                        alias,
+                    ),
+                    default_result_type="integer",
                 ),
                 fields.MetricsFunction(
                     "percentile",
@@ -255,7 +297,13 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                         ),
                         fields.NumberRange("percentile", 0, 1),
                     ],
-                    snql_metric_layer=self._resolve_percentile,
+                    is_percentile=True,
+                    snql_metric_layer=lambda args, alias: function_aliases.resolve_metrics_layer_percentile(
+                        args=args,
+                        alias=alias,
+                        resolve_mri=self.resolve_mri,
+                        fixed_percentile=args["percentile"],
+                    ),
                     default_result_type="duration",
                 ),
                 fields.MetricsFunction(
@@ -268,7 +316,7 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                     snql_metric_layer=lambda args, alias: Function(
                         "count_unique",
                         [
-                            Column(TransactionMRI.USER.value),
+                            self.resolve_mri(args["column"]),
                         ],
                         alias,
                     ),
@@ -277,39 +325,41 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                 fields.MetricsFunction(
                     "uniq",
                     snql_metric_layer=lambda args, alias: Function(
-                        "uniq",
-                        [Column(self.resolve_metric(args["column"]))],
+                        "count_unique",
+                        # We use the metric mri specified in
+                        # sentry.snuba.entity_subscription.MetricsSetsEntitySubscription.metric_key.
+                        [
+                            Column(SessionMRI.RAW_USER.value),
+                        ],
                         alias,
                     ),
                 ),
                 fields.MetricsFunction(
                     "uniqIf",
                     required_args=[
-                        fields.ColumnTagArg("if_col"),
-                        fields.FunctionArg("if_val"),
-                    ],
-                    calculated_args=[
-                        {
-                            "name": "resolved_val",
-                            "fn": lambda args: self.resolve_value(args["if_val"]),
-                        }
+                        # Values domain restricted because of
+                        # sentry.snuba.entity_subscription.MetricsSetsEntitySubscription.get_snql_aggregations.
+                        fields.MetricArg("if_col", allowed_columns=["session.status"]),
+                        fields.SnQLStringArg("if_val", allowed_strings=["crashed"]),
                     ],
                     snql_metric_layer=lambda args, alias: Function(
-                        "uniqIf",
-                        [
-                            Column(self.resolve_metric(args["column"])),
-                            Function("equals", [args["if_col"], args["resolved_val"]]),
-                        ],
+                        "uniq_if_column",
+                        # We use the metric mri specified in
+                        # sentry.snuba.entity_subscription.MetricsSetsEntitySubscription.metric_key.
+                        [Column(SessionMRI.RAW_USER.value), args["if_col"], args["if_val"]],
                         alias,
                     ),
                     default_result_type="integer",
                 ),
                 fields.MetricsFunction(
                     "count",
+                    optional_args=[
+                        fields.with_default("transaction.duration", fields.MetricArg("column")),
+                    ],
                     snql_metric_layer=lambda args, alias: Function(
                         "count",
                         [
-                            Column(TransactionMRI.DURATION.value),
+                            self.resolve_mri(args["column"]),
                         ],
                         alias,
                     ),
@@ -326,6 +376,7 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                                 "measurements.lcp",
                                 "measurements.fid",
                                 "measurements.cls",
+                                "measurements.ttfb",
                             ],
                             allow_custom_measurements=False,
                         ),
@@ -342,13 +393,35 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                         "rate",
                         [
                             Column(TransactionMRI.DURATION.value),
-                            args["interval"],
+                            (
+                                self.builder.interval
+                                if hasattr(self.builder, "interval")
+                                else args["interval"]
+                            ),
                             60,
                         ],
                         alias,
                     ),
                     optional_args=[fields.IntervalDefault("interval", 1, None)],
-                    default_result_type="number",
+                    default_result_type="rate",
+                ),
+                fields.MetricsFunction(
+                    "spm",
+                    snql_metric_layer=lambda args, alias: Function(
+                        "rate",
+                        [
+                            Column(SpanMRI.SELF_TIME.value),
+                            (
+                                self.builder.interval
+                                if hasattr(self.builder, "interval")
+                                else args["interval"]
+                            ),
+                            60,
+                        ],
+                        alias,
+                    ),
+                    optional_args=[fields.IntervalDefault("interval", 1, None)],
+                    default_result_type="rate",
                 ),
                 fields.MetricsFunction(
                     "eps",
@@ -356,13 +429,17 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                         "rate",
                         [
                             Column(TransactionMRI.DURATION.value),
-                            args["interval"],
+                            (
+                                self.builder.interval
+                                if hasattr(self.builder, "interval")
+                                else args["interval"]
+                            ),
                             1,
                         ],
                         alias,
                     ),
                     optional_args=[fields.IntervalDefault("interval", 1, None)],
-                    default_result_type="number",
+                    default_result_type="rate",
                 ),
                 fields.MetricsFunction(
                     "failure_count",
@@ -375,6 +452,20 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
                     "failure_rate",
                     snql_metric_layer=lambda args, alias: AliasedExpression(
                         Column(TransactionMRI.FAILURE_RATE.value), alias
+                    ),
+                    default_result_type="percentage",
+                ),
+                fields.MetricsFunction(
+                    "http_error_count",
+                    snql_metric_layer=lambda args, alias: AliasedExpression(
+                        Column(TransactionMRI.HTTP_ERROR_COUNT.value), alias
+                    ),
+                    default_result_type="integer",
+                ),
+                fields.MetricsFunction(
+                    "http_error_rate",
+                    snql_metric_layer=lambda args, alias: AliasedExpression(
+                        Column(TransactionMRI.HTTP_ERROR_RATE.value), alias
                     ),
                     default_result_type="percentage",
                 ),
@@ -400,8 +491,6 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
         return AliasedExpression(self.builder.resolve_column("transaction"), alias)
 
     def _resolve_team_key_transaction_alias(self, _: str) -> SelectType:
-        if self.builder.dry_run:
-            return field_aliases.dry_run_default(self.builder, constants.TEAM_KEY_TRANSACTION_ALIAS)
         team_key_transactions = field_aliases.get_team_transactions(self.builder)
         count = len(team_key_transactions)
 
@@ -421,31 +510,22 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
         )
 
     # Query Filters
-    def _event_type_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
+    def _event_type_converter(self, search_filter: SearchFilter) -> WhereType | None:
         """Not really a converter, check its transaction, error otherwise"""
         value = search_filter.value.value
-        if value == "transaction":
+        operator = search_filter.operator
+        if value == "transaction" and operator == "=":
             return None
 
         raise IncompatibleMetricsQuery("Can only filter event.type:transaction")
 
-    def _project_slug_filter_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
+    def _project_slug_filter_converter(self, search_filter: SearchFilter) -> WhereType | None:
         return filter_aliases.project_slug_converter(self.builder, search_filter)
 
-    def _release_filter_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
+    def _release_filter_converter(self, search_filter: SearchFilter) -> WhereType | None:
         return filter_aliases.release_filter_converter(self.builder, search_filter)
 
-    def _duration_filter_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
-        if (
-            self.builder.dry_run
-            and search_filter.value.raw_value == 900000
-            and search_filter.operator == "<"
-        ):
-            return None
-
-        return self.builder._default_filter_converter(search_filter)
-
-    def _transaction_filter_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
+    def _transaction_filter_converter(self, search_filter: SearchFilter) -> WhereType | None:
         operator = search_filter.operator
         value = search_filter.value.value
 
@@ -482,39 +562,10 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
         return Condition(self.builder.resolve_column("transaction"), Op(operator), value)
 
     # Query Functions
-    def _resolve_percentile(
-        self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: str,
-        fixed_percentile: Optional[float] = None,
-    ) -> SelectType:
-        if fixed_percentile is None:
-            fixed_percentile = args["percentile"]
-        if fixed_percentile not in constants.METRIC_PERCENTILES:
-            raise IncompatibleMetricsQuery("Custom quantile incompatible with metrics")
-        column = Column(self.resolve_metric(args["column"]))
-        return (
-            Function(
-                "max",
-                [
-                    column,
-                ],
-                alias,
-            )
-            if fixed_percentile == 1
-            else Function(
-                f"p{int(fixed_percentile * 100)}",
-                [
-                    column,
-                ],
-                alias,
-            )
-        )
-
     def _resolve_apdex_function(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         """Apdex is tag based in metrics, which means we can't base it on the satsifaction parameter"""
         if args["satisfaction"] is not None:
@@ -528,8 +579,8 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
 
     def _resolve_user_misery_function(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         if args["satisfaction"] is not None:
             raise IncompatibleMetricsQuery(
@@ -542,8 +593,8 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
 
     def _resolve_count_miserable_function(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         if args["satisfaction"] is not None:
             raise IncompatibleMetricsQuery(
@@ -554,12 +605,12 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
             alias,
         )
 
-    def _key_transaction_filter_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
+    def _key_transaction_filter_converter(self, search_filter: SearchFilter) -> WhereType | None:
         return filter_aliases.team_key_transaction_filter(self.builder, search_filter)
 
     def _resolve_web_vital_function(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
+        args: Mapping[str, str | Column | SelectType | int | float],
         alias: str,
     ) -> SelectType:
         column = args["column"]
@@ -571,26 +622,28 @@ class MetricsLayerDatasetConfig(MetricsDatasetConfig):
             "measurements.fp",
             "measurements.fid",
             "measurements.cls",
+            "measurements.ttfb",
         ]:
             raise InvalidSearchQuery("count_web_vitals only supports measurements")
 
+        column = Column(constants.METRICS_MAP.get(column, column))
         if quality == "any":
             return Function(
                 "count",
-                [],
+                [column],
                 alias,
             )
 
         return Function(
             "count_web_vitals",
-            [Column(constants.METRICS_MAP.get(column, column)), quality],
+            [column, quality],
             alias,
         )
 
     def _resolve_histogram_function(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         """zoom_params is based on running metrics zoom_histogram function that adds conditions based on min, max,
         buckets"""

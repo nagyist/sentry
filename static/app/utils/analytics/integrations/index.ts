@@ -1,19 +1,18 @@
-import {IntegrationType, SentryAppStatus} from 'sentry/types';
+import type {IntegrationType, SentryAppStatus} from 'sentry/types/integrations';
+import type {MessagingIntegrationAnalyticsView} from 'sentry/views/alerts/rules/issue/setupMessagingIntegrationButton';
 
-import {codeownersEventMap, CodeownersEventParameters} from './codeownersAnalyticsEvents';
-import {platformEventMap, PlatformEventParameters} from './platformAnalyticsEvents';
-import {
-  stacktraceLinkEventMap,
-  StacktraceLinkEventParameters,
-} from './stacktraceLinkAnalyticsEvents';
+import type {PlatformEventParameters} from './platformAnalyticsEvents';
+import {platformEventMap} from './platformAnalyticsEvents';
 
 export type IntegrationView = {
   view?:
+    | MessagingIntegrationAnalyticsView
     | 'external_install'
     | 'legacy_integrations'
     | 'plugin_details'
     | 'integrations_directory'
     | 'integrations_directory_integration_detail'
+    | 'stacktrace_link'
     | 'stacktrace_issue_details'
     | 'integration_configuration_detail'
     | 'onboarding'
@@ -28,7 +27,7 @@ type SingleIntegrationEventParams = {
   already_installed?: boolean;
   // include the status since people might do weird things testing unpublished integrations
   integration_status?: SentryAppStatus;
-  integration_tab?: 'configurations' | 'overview';
+  integration_tab?: 'configurations' | 'overview' | 'features';
   plan?: string;
 } & IntegrationView;
 
@@ -57,6 +56,11 @@ type IntegrationInstallationInputValueChangeEventParams = {
   field_name: string;
 } & SingleIntegrationEventParams;
 
+type ProjectOwnershipModalParams = {
+  page: 'issue_details' | 'project_settings';
+  net_change?: number;
+};
+
 // Event key to payload mappings
 export type IntegrationEventParameters = {
   'integrations.cloudformation_link_clicked': SingleIntegrationEventParams;
@@ -82,9 +86,9 @@ export type IntegrationEventParameters = {
   'integrations.uninstall_clicked': SingleIntegrationEventParams;
   'integrations.uninstall_completed': SingleIntegrationEventParams;
   'integrations.upgrade_plan_modal_opened': SingleIntegrationEventParams;
-} & CodeownersEventParameters &
-  StacktraceLinkEventParameters &
-  PlatformEventParameters;
+  'project_ownership.modal_opened': ProjectOwnershipModalParams;
+  'project_ownership.saved': ProjectOwnershipModalParams;
+} & PlatformEventParameters;
 
 export type IntegrationAnalyticsKey = keyof IntegrationEventParameters;
 
@@ -115,7 +119,7 @@ export const integrationEventMap: Record<IntegrationAnalyticsKey, string> = {
   'integrations.serverless_function_action': 'Integrations: Serverless Function Action',
   'integrations.cloudformation_link_clicked': 'Integrations: CloudFormation Link Clicked',
   'integrations.switch_manual_sdk_setup': 'Integrations: Switch Manual SDK Setup',
-  ...codeownersEventMap,
-  ...stacktraceLinkEventMap,
+  'project_ownership.modal_opened': 'Project Ownership: Modal Opened',
+  'project_ownership.saved': 'Project Ownership: Saved',
   ...platformEventMap,
 };

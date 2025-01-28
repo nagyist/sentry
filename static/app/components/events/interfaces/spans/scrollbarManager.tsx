@@ -1,20 +1,19 @@
 import {Component, createContext, createRef} from 'react';
-import throttle from 'lodash/throttle';
 
 import {
   TOGGLE_BORDER_BOX,
   TOGGLE_BUTTON_MAX_WIDTH,
 } from 'sentry/components/performance/waterfall/treeConnector';
-import {
-  clamp,
-  rectOfContent,
-  toPercent,
-} from 'sentry/components/performance/waterfall/utils';
+import {rectOfContent} from 'sentry/components/performance/waterfall/utils';
 import getDisplayName from 'sentry/utils/getDisplayName';
-import {setBodyUserSelect, UserSelectValues} from 'sentry/utils/userselect';
+import clamp from 'sentry/utils/number/clamp';
+import toPercent from 'sentry/utils/number/toPercent';
+import type {UserSelectValues} from 'sentry/utils/userselect';
+import {setBodyUserSelect} from 'sentry/utils/userselect';
 
-import {DragManagerChildrenProps} from './dragManager';
-import {SpanBar} from './spanBar';
+import type {DragManagerChildrenProps} from './dragManager';
+import type {NewTraceDetailsSpanBar} from './newTraceDetailsSpanBar';
+import type {SpanBar} from './spanBar';
 
 export type ScrollbarManagerChildrenProps = {
   addContentSpanBarRef: (instance: HTMLDivElement | null) => void;
@@ -24,7 +23,7 @@ export type ScrollbarManagerChildrenProps = {
   onWheel: (deltaX: number) => void;
   removeContentSpanBarRef: (instance: HTMLDivElement | null) => void;
   scrollBarAreaRef: React.RefObject<HTMLDivElement>;
-  storeSpanBar: (spanBar: SpanBar) => void;
+  storeSpanBar: (spanBar: SpanBar | NewTraceDetailsSpanBar) => void;
   updateHorizontalScrollState: (avgSpanDepth: number) => void;
   updateScrollState: () => void;
   virtualScrollbarRef: React.RefObject<HTMLDivElement>;
@@ -91,7 +90,6 @@ export class Provider extends Component<Props, State> {
   componentDidMount() {
     // React will guarantee that refs are set before componentDidMount() is called;
     // but only for DOM elements that actually got rendered
-
     this.initializeScrollState();
   }
 
@@ -126,7 +124,7 @@ export class Provider extends Component<Props, State> {
   wheelTimeout: NodeJS.Timeout | null = null;
   animationTimeout: NodeJS.Timeout | null = null;
   previousUserSelect: UserSelectValues | null = null;
-  spanBars: SpanBar[] = [];
+  spanBars: Array<SpanBar | NewTraceDetailsSpanBar> = [];
   currentLeftPos = 0;
 
   getReferenceSpanBar() {
@@ -305,9 +303,6 @@ export class Provider extends Component<Props, State> {
       spanBarDOM.style.transformOrigin = 'left';
     });
   };
-
-  // Throttle the scroll function to prevent jankiness in the auto-adjust animations when scrolling fast
-  throttledScroll = throttle(this.performScroll, 500, {trailing: true});
 
   onWheel = (deltaX: number) => {
     if (this.isDragging || !this.hasInteractiveLayer()) {
@@ -519,7 +514,7 @@ export class Provider extends Component<Props, State> {
     });
   }
 
-  storeSpanBar = (spanBar: SpanBar) => {
+  storeSpanBar = (spanBar: SpanBar | NewTraceDetailsSpanBar) => {
     this.spanBars.push(spanBar);
   };
 

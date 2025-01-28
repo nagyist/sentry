@@ -1,5 +1,5 @@
-import React, {useEffect} from 'react';
-import {vec2} from 'gl-matrix';
+import {useEffect} from 'react';
+import type {vec2} from 'gl-matrix';
 
 import {requestAnimationFrameTimeout} from 'sentry/views/profiling/utils';
 
@@ -7,18 +7,14 @@ export function useCanvasZoomOrScroll({
   handleWheel,
   handleScroll,
   canvas,
-  configSpaceCursor,
   setConfigSpaceCursor,
-  lastInteraction,
   setLastInteraction,
 }: {
   canvas: HTMLCanvasElement | null;
-  configSpaceCursor: vec2 | null;
-  handleScroll: (evt: WheelEvent) => void;
-  handleWheel: (evt: WheelEvent) => void;
-  lastInteraction: 'pan' | 'click' | 'zoom' | 'scroll' | 'select' | 'resize' | null;
   setConfigSpaceCursor: React.Dispatch<React.SetStateAction<vec2 | null>>;
-  setLastInteraction: React.Dispatch<
+  handleScroll?: (evt: WheelEvent) => void;
+  handleWheel?: (evt: WheelEvent) => void;
+  setLastInteraction?: React.Dispatch<
     React.SetStateAction<'pan' | 'click' | 'zoom' | 'scroll' | 'select' | 'resize' | null>
   >;
 }) {
@@ -33,23 +29,20 @@ export function useCanvasZoomOrScroll({
         window.cancelAnimationFrame(wheelStopTimeoutId.current);
       }
       wheelStopTimeoutId = requestAnimationFrameTimeout(() => {
-        setLastInteraction(null);
+        setLastInteraction?.(null);
       }, 300);
 
-      // We need to prevent the default behavior of the wheel event or we
-      // risk triggering back/forward browser navigation
-      evt.preventDefault();
       // When we zoom, we want to clear cursor so that any tooltips
       // rendered on the flamegraph are removed from the flamegraphView
       setConfigSpaceCursor(null);
 
       // pinch to zoom is recognized as `ctrlKey + wheelEvent`
       if (evt.metaKey || evt.ctrlKey) {
-        handleWheel(evt);
-        setLastInteraction('zoom');
+        handleWheel?.(evt);
+        setLastInteraction?.('zoom');
       } else {
-        handleScroll(evt);
-        setLastInteraction('scroll');
+        handleScroll?.(evt);
+        setLastInteraction?.('scroll');
       }
     }
 
@@ -61,13 +54,5 @@ export function useCanvasZoomOrScroll({
       }
       canvas.removeEventListener('wheel', onCanvasWheel);
     };
-  }, [
-    canvas,
-    handleWheel,
-    handleScroll,
-    configSpaceCursor,
-    lastInteraction,
-    setConfigSpaceCursor,
-    setLastInteraction,
-  ]);
+  }, [canvas, handleWheel, handleScroll, setConfigSpaceCursor, setLastInteraction]);
 }

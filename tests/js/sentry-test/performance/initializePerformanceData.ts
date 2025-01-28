@@ -1,25 +1,30 @@
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
 
-import {RawSpanType} from 'sentry/components/events/interfaces/spans/types';
-import {EntryType, EventTransaction, Project} from 'sentry/types';
+import type {RawSpanType} from 'sentry/components/events/interfaces/spans/types';
+import type {EventTransaction} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 import EventView from 'sentry/utils/discover/eventView';
-import {
+import type {
   ExampleSpan,
   ExampleTransaction,
   SuspectSpan,
 } from 'sentry/utils/performance/suspectSpans/types';
 
-export interface initializeDataSettings {
+export interface InitializeDataSettings {
   features?: string[];
   project?: any; // TODO(k-fish): Fix this project type.
   projects?: Project[];
   query?: {};
-  selectedProject?: number | string;
+  selectedProject?: any;
 }
 
-export function initializeData(settings?: initializeDataSettings) {
-  const _defaultProject = TestStubs.Project();
+export function initializeData(settings?: InitializeDataSettings) {
+  const _defaultProject = ProjectFixture();
   const _settings = {
     query: {},
     features: [],
@@ -29,22 +34,21 @@ export function initializeData(settings?: initializeDataSettings) {
   };
   const {query, features, projects, selectedProject: project} = _settings;
 
-  const organization = TestStubs.Organization({
+  const organization = OrganizationFixture({
     features,
-    projects,
   });
-  const routerLocation: {query: {project?: number}} = {
+  const routerLocation: {query: {project?: string}} = {
     query: {
       ...query,
     },
   };
   if (settings?.selectedProject || settings?.project) {
-    routerLocation.query.project = (project || settings?.project) as any;
+    routerLocation.query.project = project || settings?.project;
   }
   const router = {
     location: routerLocation,
   };
-  const initialData = initializeOrg({organization, projects, project, router});
+  const initialData = initializeOrg({organization, projects, router});
   const location = initialData.router.location;
   const eventView = EventView.fromLocation(location);
 
@@ -119,6 +123,7 @@ function makeSpan(opt: SpanOpt): ExampleSpan {
   const {id} = opt;
   return {
     id,
+    trace: 'trace',
     startTimestamp: 10100,
     finishTimestamp: 10200,
     exclusiveTime: 100,
@@ -227,10 +232,11 @@ export function generateSampleSpan(
     data: {},
   };
 
-  if (!Array.isArray(event.entries[0].data)) {
+  if (!Array.isArray(event.entries[0]!.data)) {
     throw new Error('Event entries data is not an array');
   }
 
-  event.entries[0].data.push(span);
+  const data = event.entries[0]!.data as RawSpanType[];
+  data.push(span);
   return span;
 }

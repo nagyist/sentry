@@ -1,6 +1,8 @@
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import {Commit, Repository, RepositoryStatus, User} from 'sentry/types';
+import type {Commit, Repository} from 'sentry/types/integrations';
+import {RepositoryStatus} from 'sentry/types/integrations';
+import type {User} from 'sentry/types/user';
 
 import {QuickContextCommitRow} from './quickContextCommitRow';
 
@@ -64,6 +66,7 @@ describe('Quick Context Commit Row', () => {
           dateCreated: '2022-10-07T19:35:27.370422Z',
           integrationId: '14',
           externalSlug: 'org-slug',
+          externalId: '1',
         },
       },
     };
@@ -73,7 +76,7 @@ describe('Quick Context Commit Row', () => {
     const pullRequestLink = screen.getByText(
       /feat\(quick-context-commit-row\): Added new component/
     );
-    expect(screen.queryByTestId('quick-context-commit-row-pr-link')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-context-commit-row-pr-link')).toBeInTheDocument();
     expect(pullRequestLink).toBeInTheDocument();
     expect(pullRequestLink).toHaveAttribute(
       'href',

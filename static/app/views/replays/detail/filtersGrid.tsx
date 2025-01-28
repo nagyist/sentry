@@ -1,10 +1,11 @@
 import {Children} from 'react';
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 const FiltersGrid = styled('div')`
   display: grid;
+  flex-grow: 1;
   gap: ${space(1)};
   grid-template-columns:
     repeat(${p => Children.toArray(p.children).length - 1}, max-content)

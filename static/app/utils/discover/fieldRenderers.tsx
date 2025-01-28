@@ -1,47 +1,63 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import partial from 'lodash/partial';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import Count from 'sentry/components/count';
-import DropdownMenuControl from 'sentry/components/dropdownMenuControl';
-import {MenuItemProps} from 'sentry/components/dropdownMenuItem';
+import {deviceNameMapper} from 'sentry/components/deviceName';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import Duration from 'sentry/components/duration';
 import FileSize from 'sentry/components/fileSize';
+import BadgeDisplayName from 'sentry/components/idBadge/badgeDisplayName';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
 import UserBadge from 'sentry/components/idBadge/userBadge';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import {RowRectangle} from 'sentry/components/performance/waterfall/rowBar';
-import {pickBarColor, toPercent} from 'sentry/components/performance/waterfall/utils';
-import Tooltip from 'sentry/components/tooltip';
+import {pickBarColor} from 'sentry/components/performance/waterfall/utils';
+import {Tooltip} from 'sentry/components/tooltip';
 import UserMisery from 'sentry/components/userMisery';
 import Version from 'sentry/components/version';
-import {IconDownload, IconPlay} from 'sentry/icons';
-import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {AvatarProject, IssueAttachment, Organization, Project} from 'sentry/types';
-import {defined, isUrl} from 'sentry/utils';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
-import EventView, {EventData, MetaType} from 'sentry/utils/discover/eventView';
+import {IconDownload} from 'sentry/icons';
+import {t, tct} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
+import type {IssueAttachment} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
+import type {AvatarProject, Project} from 'sentry/types/project';
+import {defined} from 'sentry/utils';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import toArray from 'sentry/utils/array/toArray';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type {EventData, MetaType} from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {RateUnit} from 'sentry/utils/discover/fields';
 import {
   AGGREGATIONS,
   getAggregateAlias,
   getSpanOperationName,
   isEquation,
   isRelativeSpanOperationBreakdownField,
+  parseFunction,
   SPAN_OP_BREAKDOWN_FIELDS,
   SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
 } from 'sentry/utils/discover/fields';
 import {getShortEventId} from 'sentry/utils/events';
-import {formatFloat, formatPercentage} from 'sentry/utils/formatters';
+import {formatRate} from 'sentry/utils/formatters';
 import getDynamicText from 'sentry/utils/getDynamicText';
+import {formatApdex} from 'sentry/utils/number/formatApdex';
+import {formatFloat} from 'sentry/utils/number/formatFloat';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
+import toPercent from 'sentry/utils/number/toPercent';
 import Projects from 'sentry/utils/projects';
-import toArray from 'sentry/utils/toArray';
-import {QuickContextHoverWrapper} from 'sentry/views/eventsV2/table/quickContext/quickContextWrapper';
-import {ContextType} from 'sentry/views/eventsV2/table/quickContext/utils';
+import {isUrl} from 'sentry/utils/string/isUrl';
+import {QuickContextHoverWrapper} from 'sentry/views/discover/table/quickContext/quickContextWrapper';
+import {ContextType} from 'sentry/views/discover/table/quickContext/utils';
+import {PercentChangeCell} from 'sentry/views/insights/common/components/tableCells/percentChangeCell';
+import {ResponseStatusCodeCell} from 'sentry/views/insights/common/components/tableCells/responseStatusCodeCell';
+import {TimeSpentCell} from 'sentry/views/insights/common/components/tableCells/timeSpentCell';
+import {SpanMetricsField} from 'sentry/views/insights/types';
 import {
   filterToLocationQuery,
   SpanOperationBreakdownFilter,
@@ -103,7 +119,9 @@ type FieldFormatters = {
   duration: FieldFormatter;
   integer: FieldFormatter;
   number: FieldFormatter;
+  percent_change: FieldFormatter;
   percentage: FieldFormatter;
+  rate: FieldFormatter;
   size: FieldFormatter;
   string: FieldFormatter;
 };
@@ -115,6 +133,14 @@ const EmptyValueContainer = styled('span')`
 `;
 const emptyValue = <EmptyValueContainer>{t('(no value)')}</EmptyValueContainer>;
 const emptyStringValue = <EmptyValueContainer>{t('(empty string)')}</EmptyValueContainer>;
+const missingUserMisery = tct(
+  'We were unable to calculate User Misery. A likely cause of this is that the user was not set. [link:Read the docs]',
+  {
+    link: (
+      <ExternalLink href="https://docs.sentry.io/platforms/javascript/enriching-events/identify-user/" />
+    ),
+  }
+);
 
 export function nullableValue(value: string | null): string | React.ReactElement {
   switch (value) {
@@ -127,6 +153,7 @@ export function nullableValue(value: string | null): string | React.ReactElement
   }
 }
 
+// TODO: Remove this, use `SIZE_UNIT_MULTIPLIERS` instead
 export const SIZE_UNITS = {
   bit: 1 / 8,
   byte: 1,
@@ -153,6 +180,7 @@ export const ABYTE_UNITS = [
   'exabyte',
 ];
 
+// TODO: Remove this, use `DURATION_UNIT_MULTIPLIERS` instead
 export const DURATION_UNITS = {
   nanosecond: 1 / 1000 ** 2,
   microsecond: 1 / 1000,
@@ -210,6 +238,7 @@ export const FIELD_FORMATTERS: FieldFormatters = {
         <NumberContainer>
           {typeof data[field] === 'number' ? (
             <Duration
+              // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
               seconds={(data[field] * ((unit && DURATION_UNITS[unit]) ?? 1)) / 1000}
               fixedDigits={2}
               abbreviation
@@ -217,6 +246,17 @@ export const FIELD_FORMATTERS: FieldFormatters = {
           ) : (
             emptyValue
           )}
+        </NumberContainer>
+      );
+    },
+  },
+  rate: {
+    isSortable: true,
+    renderFunc: (field, data, baggage) => {
+      const {unit} = baggage ?? {};
+      return (
+        <NumberContainer>
+          {formatRate(data[field], unit as RateUnit, {minimumValue: 0.01})}
         </NumberContainer>
       );
     },
@@ -241,7 +281,9 @@ export const FIELD_FORMATTERS: FieldFormatters = {
     isSortable: true,
     renderFunc: (field, data) => (
       <NumberContainer>
-        {typeof data[field] === 'number' ? formatPercentage(data[field]) : emptyValue}
+        {typeof data[field] === 'number'
+          ? formatPercentage(data[field], undefined, {minimumValue: 0.0001})
+          : emptyValue}
       </NumberContainer>
     ),
   },
@@ -251,9 +293,11 @@ export const FIELD_FORMATTERS: FieldFormatters = {
       const {unit} = baggage ?? {};
       return (
         <NumberContainer>
-          {unit && SIZE_UNITS[unit] && typeof data[field] === 'number' ? (
+          {unit &&
+          SIZE_UNITS[unit as keyof typeof SIZE_UNITS] &&
+          typeof data[field] === 'number' ? (
             <FileSize
-              bytes={data[field] * SIZE_UNITS[unit]}
+              bytes={data[field] * SIZE_UNITS[unit as keyof typeof SIZE_UNITS]}
               base={ABYTE_UNITS.includes(unit) ? 10 : 2}
             />
           ) : (
@@ -270,17 +314,29 @@ export const FIELD_FORMATTERS: FieldFormatters = {
       const value = Array.isArray(data[field])
         ? data[field].slice(-1)
         : defined(data[field])
-        ? data[field]
-        : emptyValue;
+          ? data[field]
+          : emptyValue;
+
       if (isUrl(value)) {
         return (
-          <Container>
-            <ExternalLink href={value} data-test-id="group-tag-url">
-              {value}
-            </ExternalLink>
-          </Container>
+          <Tooltip title={value} containerDisplayMode="block" showOnlyOnOverflow>
+            <Container>
+              <ExternalLink href={value} data-test-id="group-tag-url">
+                {value}
+              </ExternalLink>
+            </Container>
+          </Tooltip>
         );
       }
+
+      if (value && typeof value === 'string') {
+        return (
+          <Tooltip title={value} containerDisplayMode="block" showOnlyOnOverflow>
+            <Container>{nullableValue(value)}</Container>
+          </Tooltip>
+        );
+      }
+
       return <Container>{nullableValue(value)}</Container>;
     },
   },
@@ -289,6 +345,12 @@ export const FIELD_FORMATTERS: FieldFormatters = {
     renderFunc: (field, data) => {
       const value = toArray(data[field]);
       return <ArrayValue value={value} />;
+    },
+  },
+  percent_change: {
+    isSortable: true,
+    renderFunc: (fieldName, data) => {
+      return <PercentChangeCell deltaValue={data[fieldName]} />;
     },
   },
 };
@@ -304,16 +366,21 @@ type SpecialField = {
 };
 
 type SpecialFields = {
+  'apdex()': SpecialField;
   attachments: SpecialField;
   'count_unique(user)': SpecialField;
+  device: SpecialField;
   'error.handled': SpecialField;
   id: SpecialField;
   issue: SpecialField;
   'issue.id': SpecialField;
   minidump: SpecialField;
+  'profile.id': SpecialField;
   project: SpecialField;
   release: SpecialField;
   replayId: SpecialField;
+  'span.description': SpecialField;
+  'span.status_code': SpecialField;
   team_key_transaction: SpecialField;
   'timestamp.to_day': SpecialField;
   'timestamp.to_hour': SpecialField;
@@ -339,10 +406,22 @@ const RightAlignedContainer = styled('span')`
 const SPECIAL_FIELDS: SpecialFields = {
   // This is a custom renderer for a field outside discover
   // TODO - refactor code and remove from this file or add ability to query for attachments in Discover
+  'apdex()': {
+    sortField: 'apdex()',
+    renderFunc: data => {
+      const field = 'apdex()';
+
+      return (
+        <NumberContainer>
+          {typeof data[field] === 'number' ? formatApdex(data[field]) : emptyValue}
+        </NumberContainer>
+      );
+    },
+  },
   attachments: {
     sortField: null,
     renderFunc: (data, {organization, projectSlug}) => {
-      const attachments: Array<IssueAttachment> = data.attachments;
+      const attachments: IssueAttachment[] = data.attachments;
 
       const items: MenuItemProps[] = attachments
         .filter(attachment => attachment.type !== 'event.minidump')
@@ -357,7 +436,7 @@ const SPECIAL_FIELDS: SpecialFields = {
 
       return (
         <RightAlignedContainer>
-          <DropdownMenuControl
+          <DropdownMenu
             position="left"
             size="xs"
             triggerProps={{
@@ -417,6 +496,29 @@ const SPECIAL_FIELDS: SpecialFields = {
       return <Container>{getShortEventId(id)}</Container>;
     },
   },
+  'span.description': {
+    sortField: 'span.description',
+    renderFunc: data => {
+      const value = data['span.description'];
+
+      return (
+        <Tooltip
+          title={value}
+          containerDisplayMode="block"
+          showOnlyOnOverflow
+          maxWidth={400}
+        >
+          <Container>
+            {isUrl(value) ? (
+              <ExternalLink href={value}>{value}</ExternalLink>
+            ) : (
+              nullableValue(value)
+            )}
+          </Container>
+        </Tooltip>
+      );
+    },
+  },
   trace: {
     sortField: 'trace',
     renderFunc: data => {
@@ -452,13 +554,18 @@ const SPECIAL_FIELDS: SpecialFields = {
         return emptyValue;
       }
 
-      return (
-        <Container>
-          <Button size="xs">
-            <IconPlay size="xs" />
-          </Button>
-        </Container>
-      );
+      return <Container>{getShortEventId(replayId)}</Container>;
+    },
+  },
+  'profile.id': {
+    sortField: 'profile.id',
+    renderFunc: data => {
+      const id: string | unknown = data?.['profile.id'];
+      if (typeof id !== 'string' || id === '') {
+        return emptyValue;
+      }
+
+      return <Container>{getShortEventId(id)}</Container>;
     },
   },
   issue: {
@@ -480,21 +587,15 @@ const SPECIAL_FIELDS: SpecialFields = {
 
       return (
         <Container>
-          {organization.features.includes('discover-quick-context') ? (
-            <QuickContextHoverWrapper
-              dataRow={data}
-              contextType={ContextType.ISSUE}
-              organization={organization}
-            >
-              <StyledLink to={target} aria-label={issueID}>
-                <OverflowFieldShortId shortId={`${data.issue}`} />
-              </StyledLink>
-            </QuickContextHoverWrapper>
-          ) : (
+          <QuickContextHoverWrapper
+            dataRow={data}
+            contextType={ContextType.ISSUE}
+            organization={organization}
+          >
             <StyledLink to={target} aria-label={issueID}>
               <OverflowFieldShortId shortId={`${data.issue}`} />
             </StyledLink>
-          )}
+          </QuickContextHoverWrapper>
         </Container>
       );
     },
@@ -520,7 +621,7 @@ const SPECIAL_FIELDS: SpecialFields = {
                 project = projects.find(p => p.slug === data.project);
               }
               return (
-                <ProjectBadge
+                <StyledProjectBadge
                   project={project ? project : {slug: data.project}}
                   avatarSize={16}
                 />
@@ -543,6 +644,7 @@ const SPECIAL_FIELDS: SpecialFields = {
           username: '',
           ip_address: '',
         };
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         userObj[key] = value;
 
         const badge = <UserBadge user={userObj} hideEmail avatarSize={16} />;
@@ -589,22 +691,28 @@ const SPECIAL_FIELDS: SpecialFields = {
       return <Container>{emptyValue}</Container>;
     },
   },
+  device: {
+    sortField: 'device',
+    renderFunc: data => {
+      if (typeof data.device === 'string') {
+        return <Container>{deviceNameMapper(data.device) || data.device}</Container>;
+      }
+
+      return <Container>{emptyValue}</Container>;
+    },
+  },
   release: {
     sortField: 'release',
     renderFunc: (data, {organization}) =>
       data.release ? (
         <VersionContainer>
-          {organization.features.includes('discover-quick-context') ? (
-            <QuickContextHoverWrapper
-              dataRow={data}
-              contextType={ContextType.RELEASE}
-              organization={organization}
-            >
-              <Version version={data.release} truncate />
-            </QuickContextHoverWrapper>
-          ) : (
-            <Version version={data.release} tooltipRawVersion truncate />
-          )}
+          <QuickContextHoverWrapper
+            dataRow={data}
+            contextType={ContextType.RELEASE}
+            organization={organization}
+          >
+            <Version version={data.release} truncate />
+          </QuickContextHoverWrapper>
         </VersionContainer>
       ) : (
         <Container>{emptyValue}</Container>
@@ -629,14 +737,12 @@ const SPECIAL_FIELDS: SpecialFields = {
   team_key_transaction: {
     sortField: null,
     renderFunc: (data, {organization}) => (
-      <Container>
-        <TeamKeyTransactionField
-          isKeyTransaction={(data.team_key_transaction ?? 0) !== 0}
-          organization={organization}
-          projectSlug={data.project}
-          transactionName={data.transaction}
-        />
-      </Container>
+      <TeamKeyTransactionField
+        isKeyTransaction={(data.team_key_transaction ?? 0) !== 0}
+        organization={organization}
+        projectSlug={data.project}
+        transactionName={data.transaction}
+      />
     ),
   },
   'trend_percentage()': {
@@ -671,6 +777,18 @@ const SPECIAL_FIELDS: SpecialFields = {
       </Container>
     ),
   },
+  'span.status_code': {
+    sortField: 'span.status_code',
+    renderFunc: data => (
+      <Container>
+        {data['span.status_code'] ? (
+          <ResponseStatusCodeCell code={parseInt(data['span.status_code'], 10)} />
+        ) : (
+          t('Unknown')
+        )}
+      </Container>
+    ),
+  },
 };
 
 type SpecialFunctionFieldRenderer = (
@@ -678,6 +796,7 @@ type SpecialFunctionFieldRenderer = (
 ) => (data: EventData, baggage: RenderFunctionBaggage) => React.ReactNode;
 
 type SpecialFunctions = {
+  time_spent_percentage: SpecialFunctionFieldRenderer;
   user_misery: SpecialFunctionFieldRenderer;
 };
 
@@ -690,12 +809,20 @@ const SPECIAL_FUNCTIONS: SpecialFunctions = {
     const userMiseryField = fieldName;
 
     if (!(userMiseryField in data)) {
-      return <NumberContainer>{emptyValue}</NumberContainer>;
+      return (
+        <Tooltip title={missingUserMisery} showUnderline isHoverable>
+          <NumberContainer>{emptyValue}</NumberContainer>
+        </Tooltip>
+      );
     }
 
     const userMisery = data[userMiseryField];
     if (userMisery === null || isNaN(userMisery)) {
-      return <NumberContainer>{emptyValue}</NumberContainer>;
+      return (
+        <Tooltip title={missingUserMisery} showUnderline isHoverable>
+          <NumberContainer>{emptyValue}</NumberContainer>
+        </Tooltip>
+      );
     }
 
     const projectThresholdConfig = 'project_threshold_config';
@@ -745,6 +872,17 @@ const SPECIAL_FUNCTIONS: SpecialFunctions = {
       </BarContainer>
     );
   },
+  time_spent_percentage: fieldName => data => {
+    const parsedFunction = parseFunction(fieldName);
+    const column = parsedFunction?.arguments?.[1] ?? SpanMetricsField.SPAN_SELF_TIME;
+    return (
+      <TimeSpentCell
+        percentage={data[fieldName]}
+        total={data[`sum(${column})`]}
+        op={data[`span.op`]}
+      />
+    );
+  },
 };
 
 /**
@@ -769,6 +907,7 @@ export function getSortField(
 
   for (const alias in AGGREGATIONS) {
     if (field.startsWith(alias)) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return AGGREGATIONS[alias].isSortable ? field : null;
     }
   }
@@ -808,7 +947,7 @@ export const spanOperationRelativeBreakdownRenderer = (
   }
 
   let otherPercentage = 1;
-  let orderedSpanOpsBreakdownFields;
+  let orderedSpanOpsBreakdownFields: any[];
   const sortingOnField = eventView?.sorts?.[0]?.field;
   if (sortingOnField && (SPAN_OP_BREAKDOWN_FIELDS as string[]).includes(sortingOnField)) {
     orderedSpanOpsBreakdownFields = [
@@ -861,16 +1000,13 @@ export const spanOperationRelativeBreakdownRenderer = (
                   }
                   event.stopPropagation();
                   const filter = stringToFilter(operationName);
-                  if (filter === SpanOperationBreakdownFilter.None) {
+                  if (filter === SpanOperationBreakdownFilter.NONE) {
                     return;
                   }
-                  trackAdvancedAnalyticsEvent(
-                    'performance_views.relative_breakdown.selection',
-                    {
-                      action: filter,
-                      organization,
-                    }
-                  );
+                  trackAnalytics('performance_views.relative_breakdown.selection', {
+                    action: filter,
+                    organization,
+                  });
                   browserHistory.push({
                     pathname: location.pathname,
                     query: {
@@ -911,6 +1047,12 @@ const StyledLink = styled(Link)`
   max-width: 100%;
 `;
 
+const StyledProjectBadge = styled(ProjectBadge)`
+  ${BadgeDisplayName} {
+    max-width: 100%;
+  }
+`;
+
 /**
  * Get the field renderer for the named field and metadata
  *
@@ -925,6 +1067,7 @@ export function getFieldRenderer(
   isAlias: boolean = true
 ): FieldFormatterRenderFunctionPartial {
   if (SPECIAL_FIELDS.hasOwnProperty(field)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return SPECIAL_FIELDS[field].renderFunc;
   }
 
@@ -933,15 +1076,17 @@ export function getFieldRenderer(
   }
 
   const fieldName = isAlias ? getAggregateAlias(field) : field;
-  const fieldType = meta[fieldName];
+  const fieldType = meta[fieldName] || meta.fields?.[fieldName];
 
   for (const alias in SPECIAL_FUNCTIONS) {
     if (fieldName.startsWith(alias)) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return SPECIAL_FUNCTIONS[alias](fieldName);
     }
   }
 
   if (FIELD_FORMATTERS.hasOwnProperty(fieldType)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return partial(FIELD_FORMATTERS[fieldType].renderFunc, fieldName);
   }
   return partial(FIELD_FORMATTERS.string.renderFunc, fieldName);
@@ -967,9 +1112,10 @@ export function getFieldFormatter(
   isAlias: boolean = true
 ): FieldTypeFormatterRenderFunctionPartial {
   const fieldName = isAlias ? getAggregateAlias(field) : field;
-  const fieldType = meta[fieldName];
+  const fieldType = meta[fieldName] || meta.fields?.[fieldName];
 
   if (FIELD_FORMATTERS.hasOwnProperty(fieldType)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return partial(FIELD_FORMATTERS[fieldType].renderFunc, fieldName);
   }
   return partial(FIELD_FORMATTERS.string.renderFunc, fieldName);

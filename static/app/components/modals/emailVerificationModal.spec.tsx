@@ -1,9 +1,10 @@
+import type {PropsWithChildren} from 'react';
+
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
 import EmailVerificationModal from 'sentry/components/modals/emailVerificationModal';
 
 describe('Email Verification Modal', function () {
-  const routerContext = TestStubs.routerContext();
   it('renders', function () {
     MockApiClient.addMockResponse({
       url: '/users/me/emails/',
@@ -12,12 +13,14 @@ describe('Email Verification Modal', function () {
 
     render(
       <EmailVerificationModal
-        Body={(p => p.children) as any}
-        Header={(p => p.children) as any}
-      />,
-      {context: routerContext}
+        Body={((p: PropsWithChildren) => p.children) as any}
+        Header={((p: PropsWithChildren) => p.children) as any}
+      />
     );
-    const message = screen.getByText('Please verify your email before');
+    const message = screen.getByText(
+      'Please verify your email before taking this action',
+      {exact: false}
+    );
     expect(message.parentElement).toHaveTextContent(
       'Please verify your email before taking this action, or go to your email settings.'
     );
@@ -37,12 +40,15 @@ describe('Email Verification Modal', function () {
 
     render(
       <EmailVerificationModal
-        Body={(p => p.children) as any}
-        Header={(p => p.children) as any}
+        Body={((p: any) => p.children) as any}
+        Header={((p: any) => p.children) as any}
         actionMessage={actionMessage}
       />
     );
-    const message = screen.getByText('Please verify your email before');
+    const message = screen.getByText(
+      'Please verify your email before accepting the tenet',
+      {exact: false}
+    );
     expect(message.parentElement).toHaveTextContent(
       `Please verify your email before ${actionMessage}, or go to your email settings.`
     );

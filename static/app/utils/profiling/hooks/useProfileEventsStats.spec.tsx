@@ -1,18 +1,17 @@
-import {ReactNode} from 'react';
-import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
+import type {ReactNode} from 'react';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {reactHooks} from 'sentry-test/reactTestingLibrary';
+import {makeTestQueryClient} from 'sentry-test/queryClient';
+import {renderHook, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import {useProfileEventsStats} from 'sentry/utils/profiling/hooks/useProfileEventsStats';
+import {QueryClientProvider} from 'sentry/utils/queryClient';
 import {OrganizationContext} from 'sentry/views/organizationContext';
 
 const {organization} = initializeOrg();
-const client = new QueryClient();
-
 function TestContext({children}: {children?: ReactNode}) {
   return (
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={makeTestQueryClient()}>
       <OrganizationContext.Provider value={organization}>
         {children}
       </OrganizationContext.Provider>
@@ -26,38 +25,31 @@ describe('useProfileEvents', function () {
   });
 
   it('handles no axis', async function () {
-    const yAxes = [];
-
     MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/events-stats/`,
       body: {},
-      match: [MockApiClient.matchQuery({dataset: 'profiles'})],
+      match: [MockApiClient.matchQuery({dataset: 'discover'})],
     });
 
-    const {result, waitFor} = reactHooks.renderHook(useProfileEventsStats, {
+    const {result} = renderHook(useProfileEventsStats, {
       wrapper: TestContext,
       initialProps: {
-        yAxes,
+        dataset: 'profiles' as const,
+        yAxes: [],
         referrer: '',
       },
     });
 
     await waitFor(() => result.current.isSuccess);
-    expect(result.current.data).toEqual([
-      {
-        data: [],
-        meta: {
-          dataset: 'profiles',
-          end: 0,
-          start: 0,
-        },
-        timestamps: [],
+    expect(result.current.data).toEqual({
+      data: [],
+      meta: {
+        dataset: 'discover',
+        end: 0,
+        start: 0,
       },
-      expect.anything(),
-      expect.objectContaining({
-        getResponseHeader: expect.anything(),
-      }),
-    ]);
+      timestamps: [],
+    });
   });
 
   it('handles 1 axis', async function () {
@@ -77,33 +69,34 @@ describe('useProfileEvents', function () {
           units: {count: null},
         },
       },
-      match: [MockApiClient.matchQuery({dataset: 'profiles'})],
+      match: [
+        MockApiClient.matchQuery({
+          dataset: 'discover',
+          query: '(has:profile.id OR (has:profiler.id has:thread.id)) (transaction:foo)',
+        }),
+      ],
     });
 
-    const {result, waitFor} = reactHooks.renderHook(useProfileEventsStats, {
+    const {result} = renderHook(useProfileEventsStats, {
       wrapper: TestContext,
       initialProps: {
+        dataset: 'profiles' as const,
         yAxes,
+        query: 'transaction:foo',
         referrer: '',
       },
     });
 
     await waitFor(() => result.current.isSuccess);
-    expect(result.current.data).toEqual([
-      {
-        data: [{axis: 'count()', values: [1, 2]}],
-        meta: {
-          dataset: 'profiles',
-          start: 0,
-          end: 10,
-        },
-        timestamps: [0, 5],
+    expect(result.current.data).toEqual({
+      data: [{axis: 'count()', values: [1, 2]}],
+      meta: {
+        dataset: 'discover',
+        start: 0,
+        end: 10,
       },
-      expect.anything(),
-      expect.objectContaining({
-        getResponseHeader: expect.anything(),
-      }),
-    ]);
+      timestamps: [0, 5],
+    });
   });
 
   it('handles n axes', async function () {
@@ -121,7 +114,7 @@ describe('useProfileEvents', function () {
           end: 10,
           meta: {
             fields: {count: 'integer', p99: 'duration'},
-            units: {count: null, p99: 'nanosecond'},
+            units: {count: null, p99: 'millisecond'},
           },
         },
         'p99()': {
@@ -133,39 +126,99 @@ describe('useProfileEvents', function () {
           end: 10,
           meta: {
             fields: {count: 'integer', p99: 'duration'},
-            units: {count: null, p99: 'nanosecond'},
+            units: {count: null, p99: 'millisecond'},
           },
         },
       },
-      match: [MockApiClient.matchQuery({dataset: 'profiles'})],
+      match: [
+        MockApiClient.matchQuery({
+          dataset: 'discover',
+          query: '(has:profile.id OR (has:profiler.id has:thread.id)) (transaction:foo)',
+        }),
+      ],
     });
 
-    const {result, waitFor} = reactHooks.renderHook(useProfileEventsStats, {
+    const {result} = renderHook(useProfileEventsStats, {
       wrapper: TestContext,
       initialProps: {
+        dataset: 'profiles' as const,
         yAxes,
+        query: 'transaction:foo',
         referrer: '',
       },
     });
 
     await waitFor(() => result.current.isSuccess);
-    expect(result.current.data).toEqual([
-      {
-        data: [
-          {axis: 'count()', values: [1, 2]},
-          {axis: 'p99()', values: [3, 4]},
-        ],
-        meta: {
-          dataset: 'profiles',
-          start: 0,
-          end: 10,
-        },
-        timestamps: [0, 5],
+    expect(result.current.data).toEqual({
+      data: [
+        {axis: 'count()', values: [1, 2]},
+        {axis: 'p99()', values: [3, 4]},
+      ],
+      meta: {
+        dataset: 'discover',
+        start: 0,
+        end: 10,
       },
-      expect.anything(),
-      expect.objectContaining({
-        getResponseHeader: expect.anything(),
-      }),
-    ]);
+      timestamps: [0, 5],
+    });
+  });
+
+  it('handles 1 axis using discover', async function () {
+    const {organization: organizationUsingTransactions} = initializeOrg();
+
+    function TestContextUsingTransactions({children}: {children?: ReactNode}) {
+      return (
+        <QueryClientProvider client={makeTestQueryClient()}>
+          <OrganizationContext.Provider value={organizationUsingTransactions}>
+            {children}
+          </OrganizationContext.Provider>
+        </QueryClientProvider>
+      );
+    }
+
+    const yAxes = ['count()'];
+
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/events-stats/`,
+      body: {
+        data: [
+          [0, [{count: 1}]],
+          [5, [{count: 2}]],
+        ],
+        start: 0,
+        end: 10,
+        meta: {
+          fields: {count: 'integer'},
+          units: {count: null},
+        },
+      },
+      match: [
+        MockApiClient.matchQuery({
+          dataset: 'discover',
+          query: '(has:profile.id OR (has:profiler.id has:thread.id)) (transaction:foo)',
+        }),
+      ],
+    });
+
+    const {result} = renderHook(useProfileEventsStats, {
+      wrapper: TestContextUsingTransactions,
+      initialProps: {
+        dataset: 'profiles' as const,
+        yAxes,
+        query: 'transaction:foo',
+        referrer: '',
+      },
+    });
+
+    await waitFor(() => result.current.isSuccess);
+    expect(result.current.data).toEqual({
+      data: [{axis: 'count()', values: [1, 2]}],
+      meta: {
+        dataset: 'discover',
+        start: 0,
+        end: 10,
+      },
+      timestamps: [0, 5],
+    });
   });
 });

@@ -1,20 +1,19 @@
-import React from 'react';
 import styled from '@emotion/styled';
 
 import HighlightTopRightPattern from 'sentry-images/pattern/highlight-top-right.svg';
 
 import SidebarPanel from 'sentry/components/sidebar/sidebarPanel';
 import pulsingIndicatorStyles from 'sentry/styles/pulsingIndicator';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
-import {CommonSidebarProps} from './types';
+import type {CommonSidebarProps} from './types';
 
 interface TaskSidebarProps
   extends Pick<CommonSidebarProps, 'orientation' | 'collapsed' | 'hidePanel'> {
   children?: React.ReactNode;
 }
 
-export const TaskSidebar = (props: TaskSidebarProps) => {
+export function TaskSidebar(props: TaskSidebarProps) {
   const {children, collapsed, hidePanel, orientation} = props;
 
   return (
@@ -27,7 +26,7 @@ export const TaskSidebar = (props: TaskSidebarProps) => {
       {children}
     </TaskSidebarPanel>
   );
-};
+}
 
 export const TaskSidebarList = styled('div')`
   display: grid;

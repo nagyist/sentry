@@ -6,13 +6,12 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.wait import WebDriverWait
 
 from fixtures.page_objects.issue_list import IssueListPage
-from sentry.models import Visibility
-from sentry.models.savedsearch import SavedSearch, SortOptions
-from sentry.testutils import AcceptanceTestCase, SnubaTestCase
-from sentry.testutils.silo import region_silo_test
+from sentry.models.savedsearch import SavedSearch, SortOptions, Visibility
+from sentry.testutils.cases import AcceptanceTestCase, SnubaTestCase
+from sentry.testutils.silo import no_silo_test
 
 
-@region_silo_test
+@no_silo_test
 class OrganizationGroupIndexTest(AcceptanceTestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
@@ -45,41 +44,39 @@ class OrganizationGroupIndexTest(AcceptanceTestCase, SnubaTestCase):
 
     def test_click_saved_search(self):
         self.page.visit_issue_list(self.org.slug)
-        self.browser.click_when_visible('button[aria-label="Saved Searches"]')
+        self.browser.click_when_visible('button[aria-label="Custom Search"]')
 
         # Navigate to a recommended saved search
         self.browser.click('button[aria-label="Errors Only"]')
         self.page.wait_until_loaded()
 
-        self.browser.snapshot("issue list after navigating to saved search")
-
     def test_create_saved_search(self):
         self.page.visit_issue_list(self.org.slug)
-        self.browser.click_when_visible('button[aria-label="Saved Searches"]')
-        self.browser.snapshot("issue list with no saved searches")
+        self.browser.click_when_visible('button[aria-label="Custom Search"]')
 
-        self.browser.click('[aria-label="Create a new saved search"]')
+        self.browser.click('[aria-label="Add saved search"]')
 
         self.browser.wait_until('[role="dialog"]')
-        self.browser.snapshot("create saved search modal open")
 
         self.browser.find_element(by=By.NAME, value="name").send_keys("My Saved Search")
         query_input = self.browser.find_element(
-            by=By.CSS_SELECTOR, value='[role="dialog"] textarea'
+            by=By.CSS_SELECTOR, value='[role="dialog"] [data-test-id="query-builder-input"]'
         )
-        self.browser.click('[role="dialog"] button[aria-label="Clear search"]')
-        query_input.send_keys("browser.name:Firefox", Keys.ENTER)
+        query_input.click()
+        query_input.send_keys("event.type:error", Keys.ENTER)
         self.browser.click('[role="dialog"] button[aria-label="Save"]')
         self.browser.wait_until_not('[data-test-id="loading-indicator"]')
 
         # The saved search should have been created with the correct options
         created_search = SavedSearch.objects.get(name="My Saved Search")
         assert created_search
-        assert created_search.query == "browser.name:Firefox"
+        assert (
+            created_search.query == "is:unresolved issue.priority:[high, medium] event.type:error"
+        )
         assert created_search.sort == SortOptions.DATE
         assert created_search.visibility == Visibility.OWNER
         assert not created_search.is_global
-        assert created_search.owner == self.user
+        assert created_search.owner_id == self.user.id
 
         # And the sidebar should have been updated with the new search item
         assert self.browser.find_element(
@@ -97,7 +94,7 @@ class OrganizationGroupIndexTest(AcceptanceTestCase, SnubaTestCase):
         )
 
         self.page.visit_issue_list(self.org.slug)
-        self.browser.click_when_visible('button[aria-label="Saved Searches"]')
+        self.browser.click_when_visible('button[aria-label="Custom Search"]')
 
         self.browser.move_to('button[aria-label="My Saved Search"]')
         self.browser.wait_until_clickable('button[aria-label="Saved search options"]')
@@ -105,7 +102,6 @@ class OrganizationGroupIndexTest(AcceptanceTestCase, SnubaTestCase):
         self.browser.click('[data-test-id="edit"]')
 
         self.browser.wait_until('[role="dialog"]')
-        self.browser.snapshot("edit saved search modal open")
 
         self.browser.find_element(by=By.NAME, value="name").clear()
         self.browser.find_element(by=By.NAME, value="name").send_keys("New Saved Search Name")
@@ -119,7 +115,7 @@ class OrganizationGroupIndexTest(AcceptanceTestCase, SnubaTestCase):
         assert created_search.sort == SortOptions.DATE
         assert created_search.visibility == Visibility.OWNER
         assert not created_search.is_global
-        assert created_search.owner == self.user
+        assert created_search.owner_id == self.user.id
 
         # And the sidebar should have been updated
         assert self.browser.find_element(
@@ -137,7 +133,7 @@ class OrganizationGroupIndexTest(AcceptanceTestCase, SnubaTestCase):
         )
 
         self.page.visit_issue_list(self.org.slug)
-        self.browser.click_when_visible('button[aria-label="Saved Searches"]')
+        self.browser.click_when_visible('button[aria-label="Custom Search"]')
 
         self.browser.move_to('button[aria-label="My Saved Search"]')
         self.browser.wait_until_clickable('button[aria-label="Saved search options"]')

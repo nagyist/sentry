@@ -1,4 +1,6 @@
-import {css, Theme} from '@emotion/react';
+import isPropValid from '@emotion/is-prop-valid';
+import type {Theme} from '@emotion/react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {growIn} from 'sentry/styles/animations';
@@ -18,7 +20,9 @@ const checkedCss = (p: CheckedProps, theme: Theme) => css`
   opacity: ${p.disabled ? 0.4 : null};
 `;
 
-const Radio = styled('input')<CheckedProps>`
+const Radio = styled((props: CheckedProps) => <input type="radio" {...props} />, {
+  shouldForwardProp: isPropValid,
+})`
   display: flex;
   padding: 0;
   width: ${p => (p.radioSize === 'small' ? '1rem' : '1.5rem')};
@@ -31,13 +35,15 @@ const Radio = styled('input')<CheckedProps>`
   box-shadow: inset ${p => p.theme.dropShadowMedium};
   background: none;
   appearance: none;
-  transition: border 0.1s, box-shadow 0.1s;
+  transition:
+    border 0.1s,
+    box-shadow 0.1s;
 
   /* TODO(bootstrap): Our bootstrap CSS adds this, we can remove when we remove that */
   margin: 0 !important;
 
   &:focus,
-  &.focus-visible {
+  &:focus-visible {
     outline: none;
     border-color: ${p => p.theme.focusBorder};
     box-shadow: ${p => p.theme.focusBorder} 0 0 0 1px;
@@ -48,9 +54,5 @@ const Radio = styled('input')<CheckedProps>`
     ${p => checkedCss(p, p.theme)}
   }
 `;
-
-Radio.defaultProps = {
-  type: 'radio',
-};
 
 export default Radio;

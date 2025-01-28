@@ -1,10 +1,11 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {IconChevron} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {useFlamegraphTheme} from 'sentry/utils/profiling/flamegraph/useFlamegraphTheme';
 
 interface CollapsibleTimelineProps {
@@ -18,8 +19,12 @@ function CollapsibleTimeline(props: CollapsibleTimelineProps) {
   const theme = useFlamegraphTheme();
   return (
     <Fragment>
-      <CollapsibleTimelineHeader border={theme.COLORS.GRID_LINE_COLOR}>
-        <span>{props.title}</span>
+      <CollapsibleTimelineHeader
+        open={props.open}
+        labelHeight={theme.SIZES.TIMELINE_LABEL_HEIGHT}
+        border={theme.COLORS.GRID_LINE_COLOR}
+      >
+        <CollapsibleTimelineLabel>{props.title}</CollapsibleTimelineLabel>
         <StyledButton
           size="xs"
           onClick={props.open ? props.onClose : props.onOpen}
@@ -30,7 +35,9 @@ function CollapsibleTimeline(props: CollapsibleTimelineProps) {
         </StyledButton>
       </CollapsibleTimelineHeader>
       {props.open ? (
-        <CollapsibleTimelineContainer>{props.children}</CollapsibleTimelineContainer>
+        <CollapsibleTimelineContainer labelHeight={theme.SIZES.TIMELINE_LABEL_HEIGHT}>
+          {props.children}
+        </CollapsibleTimelineContainer>
       ) : null}
     </Fragment>
   );
@@ -59,23 +66,60 @@ const StyledButton = styled(Button)`
   }
 `;
 
-const CollapsibleTimelineContainer = styled('div')`
+export function CollapsibleTimelineLoadingIndicator({size}: {size?: number}) {
+  return (
+    <CollapsibleTimelineLoadingIndicatorContainer>
+      <LoadingIndicator size={size ?? 32} />
+    </CollapsibleTimelineLoadingIndicatorContainer>
+  );
+}
+
+const CollapsibleTimelineContainer = styled('div')<{labelHeight: number}>`
   position: relative;
+  width: 100%;
+  height: calc(100% - ${p => p.labelHeight}px);
+`;
+
+const CollapsibleTimelineLoadingIndicatorContainer = styled('div')`
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   width: 100%;
   height: 100%;
 `;
 
-const CollapsibleTimelineHeader = styled('div')<{border: string}>`
+const CollapsibleTimelineHeader = styled('div')<{
+  border: string;
+  labelHeight: number;
+  open: boolean;
+}>`
   display: flex;
   justify-content: space-between;
   align-items: center;
   position: relative;
   z-index: 1;
-  height: 20px;
+  height: ${p => p.labelHeight}px;
+  min-height: ${p => p.labelHeight}px;
   border-top: 1px solid ${p => p.border};
-  padding: 1px ${space(1.5)};
+  border-bottom: 1px solid ${p => (p.open ? p.border : 'transparent')};
   background-color: ${p => p.theme.backgroundSecondary};
+`;
+
+export const CollapsibleTimelineLabel = styled('span')`
+  padding: 1px ${space(1)};
   font-size: ${p => p.theme.fontSizeExtraSmall};
 `;
 
+export const CollapsibleTimelineMessage = styled('p')`
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  width: 100%;
+  position: absolute;
+  color: ${p => p.theme.subText};
+  font-size: ${p => p.theme.fontSizeSmall};
+`;
 export {CollapsibleTimeline};

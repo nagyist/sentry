@@ -1,9 +1,9 @@
 __all__ = ["Feature", "with_feature", "apply_feature_flag_on_cls"]
 
+import functools
 import logging
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Generator
 from unittest.mock import patch
 
 import pytest
@@ -14,13 +14,17 @@ from sentry.features.base import OrganizationFeature, ProjectFeature
 from sentry.features.exceptions import FeatureNotRegistered
 from sentry.models.organization import Organization
 from sentry.models.project import Project
-from sentry.services.hybrid_cloud.organization import ApiOrganization
+from sentry.organizations.services.organization import (
+    RpcOrganization,
+    RpcOrganizationSummary,
+    RpcUserOrganizationContext,
+)
 
 logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def Feature(names):
+def Feature(names: str | Sequence[str] | dict[str, bool]) -> Generator[None]:
     """
     Control whether a feature is enabled.
 
@@ -40,6 +44,11 @@ def Feature(names):
     >>>   # execute with both features enabled
     >>> with Feature({'feature-1': True, 'feature-2': True}):
     >>>   # execute with both features enabled
+
+    You can enable features for specific organizations:
+
+    >>> with Feature({'feature-1': ['org-slug', 'albertos-apples']}):
+    >>>   # execute with feature-1 enabled for any organizations whose slug matches either "org-slug" or "albertos-apples"
     """
     if isinstance(names, str):
         names = {names: True}
@@ -48,6 +57,12 @@ def Feature(names):
         names = {k: True for k in names}
 
     default_features = sentry.features.has
+    default_batch_has = sentry.features.batch_has
+
+    def resolve_feature_name_value_for_org(organization, feature_name_value):
+        if isinstance(feature_name_value, list):
+            return organization.slug in feature_name_value
+        return feature_name_value
 
     def features_override(name, *args, **kwargs):
         if name in names:
@@ -58,8 +73,17 @@ def Feature(names):
 
             if isinstance(feature, OrganizationFeature):
                 org = args[0] if len(args) > 0 else kwargs.get("organization", None)
-                if not isinstance(org, Organization) and not isinstance(org, ApiOrganization):
+                if not isinstance(
+                    org,
+                    (
+                        Organization,
+                        RpcOrganizationSummary,
+                        RpcOrganization,
+                        RpcUserOrganizationContext,
+                    ),
+                ):
                     raise ValueError("Must provide organization to check feature")
+                return resolve_feature_name_value_for_org(org, names[name])
 
             if isinstance(feature, ProjectFeature):
                 project = args[0] if len(args) > 0 else kwargs.get("project", None)
@@ -78,13 +102,37 @@ def Feature(names):
                 logger.info("Flag defaulting to %s: %s", default_value, repr(name))
             return default_value
 
-    def batch_features_override(_feature_names, projects=None, organization=None, *args, **kwargs):
+    def batch_features_override(
+        _feature_names: Sequence[str], projects=None, organization=None, *args, **kwargs
+    ):
+        feature_results = {name: names[name] for name in _feature_names if name in names}
+        default_feature_names = [name for name in _feature_names if name not in names]
+        default_feature_results: dict[str, dict[str, bool | None]] = {}
+        if default_feature_names:
+            defaults = default_batch_has(
+                default_feature_names, projects=projects, organization=organization, **kwargs
+            )
+            if defaults:
+                default_feature_results.update(defaults)
+
         if projects:
-            feature_names = {name: True for name in names if name.startswith("project")}
-            return {f"project:{project.id}": feature_names for project in projects}
+            results = {}
+            for project in projects:
+                result_key = f"project:{project.id}"
+                proj_results = {**feature_results, **default_feature_results[result_key]}
+                results[result_key] = {
+                    name: val for name, val in proj_results.items() if name.startswith("project")
+                }
+            return results
         elif organization:
-            feature_names = {name: True for name in names if name.startswith("organization")}
-            return {f"organization:{organization.id}": feature_names}
+            result_key = f"organization:{organization.id}"
+            results_for_org = {**feature_results, **default_feature_results[result_key]}
+            results_for_org = {
+                name: resolve_feature_name_value_for_org(organization, val)
+                for name, val in results_for_org.items()
+                if name.startswith("organization")
+            }
+            return {result_key: results_for_org}
 
     with patch("sentry.features.has") as features_has:
         features_has.side_effect = features_override
@@ -99,6 +147,7 @@ def with_feature(feature):
             with Feature(feature):
                 return func(self, *args, **kwargs)
 
+        functools.update_wrapper(wrapped, func)
         return wrapped
 
     return decorator
@@ -106,7 +155,7 @@ def with_feature(feature):
 
 def apply_feature_flag_on_cls(feature_flag):
     def decorate(cls):
-        def _feature_fixture(self: object) -> Generator[None, None, None]:
+        def _feature_fixture(self: object) -> Generator[None]:
             with Feature(feature_flag):
                 yield
 

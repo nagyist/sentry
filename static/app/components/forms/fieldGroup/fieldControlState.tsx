@@ -1,8 +1,8 @@
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
-import {FieldGroupProps} from './types';
+import type {FieldGroupProps} from './types';
 
 type FieldControlStateProps = Pick<FieldGroupProps, 'flexibleControlStateSize'>;
 

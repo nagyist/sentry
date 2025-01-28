@@ -1,15 +1,17 @@
 import {useRef, useState} from 'react';
-import {css, Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 import {useHover} from '@react-aria/interactions';
 import classNames from 'classnames';
 
 import {IconCheckmark, IconChevron, IconInfo, IconNot, IconWarning} from 'sentry/icons';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
 import PanelProvider from 'sentry/utils/panelProvider';
 
 export interface AlertProps extends React.HTMLAttributes<HTMLDivElement> {
+  defaultExpanded?: boolean;
   expand?: React.ReactNode;
   icon?: React.ReactNode;
   opaque?: boolean;
@@ -28,12 +30,13 @@ function Alert({
   opaque,
   system,
   expand,
+  defaultExpanded = false,
   trailingItems,
   className,
   children,
   ...props
 }: AlertProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const showExpand = defined(expand);
   const showTrailingItems = defined(trailingItems);
 
@@ -70,7 +73,9 @@ function Alert({
     ) {
       return;
     }
-    showExpand && setIsExpanded(!isExpanded);
+    if (showExpand) {
+      setIsExpanded(!isExpanded);
+    }
   }
 
   return (
@@ -138,6 +143,7 @@ const alertStyles = ({
       ${showExpand && 'max-content'};
     gap: ${space(1)};
     margin: 0 0 ${space(2)};
+    color: ${alertColors.color};
     font-size: ${theme.fontSizeMedium};
     border-radius: ${theme.borderRadius};
     border: 1px solid ${alertColors.border};
@@ -150,15 +156,15 @@ const alertStyles = ({
       : `${alertColors.backgroundLight}`};
 
     a:not([role='button']) {
-      color: ${theme.textColor};
-      text-decoration-color: ${theme.translucentBorder};
+      color: ${alertColors.color};
+      text-decoration-color: ${alertColors.border};
       text-decoration-style: solid;
       text-decoration-line: underline;
       text-decoration-thickness: 0.08em;
       text-underline-offset: 0.06em;
     }
     a:not([role='button']):hover {
-      text-decoration-color: ${theme.subText};
+      text-decoration-color: ${alertColors.color};
       text-decoration-style: solid;
     }
 
@@ -167,17 +173,7 @@ const alertStyles = ({
       margin: ${space(0.5)} 0 0;
     }
 
-    ${IconWrapper}, ${ExpandIconWrap} {
-      color: ${alertColors.iconColor};
-    }
-
-    ${hovered &&
-    `
-      border-color: ${alertColors.borderHover};
-      ${IconWrapper}, ${IconChevron} {
-        color: ${alertColors.iconHoverColor};
-      }
-    `}
+    ${hovered && `border-color: ${alertColors.borderHover};`}
 
     ${showExpand &&
     `cursor: pointer;
@@ -245,6 +241,6 @@ const ExpandContainer = styled('div')<{showIcon: boolean; showTrailingItems: boo
   }
 `;
 
-export {alertStyles};
+export {Alert, alertStyles};
 
 export default Alert;

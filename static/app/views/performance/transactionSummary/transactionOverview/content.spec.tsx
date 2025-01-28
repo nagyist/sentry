@@ -1,32 +1,42 @@
-import {InjectedRouter} from 'react-router';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
 import EventView from 'sentry/utils/discover/eventView';
 import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
-import {OrganizationContext} from 'sentry/views/organizationContext';
+import {useLocation} from 'sentry/utils/useLocation';
 import {SpanOperationBreakdownFilter} from 'sentry/views/performance/transactionSummary/filter';
 import SummaryContent from 'sentry/views/performance/transactionSummary/transactionOverview/content';
-import {RouteContext} from 'sentry/views/routeContext';
 
-function initialize(project, query, additionalFeatures: string[] = []) {
+jest.mock('sentry/utils/useLocation');
+
+jest.mocked(useLocation).mockReturnValue({
+  action: 'POP',
+  hash: '',
+  key: 'abc123',
+  pathname: '/organizations/org-slug/performance/',
+  query: {},
+  search: '',
+  state: undefined,
+});
+
+function initialize(query: Record<string, string>, additionalFeatures: string[] = []) {
   const features = ['transaction-event', 'performance-view', ...additionalFeatures];
-  const organization = TestStubs.Organization({
+  const organization = OrganizationFixture({
     features,
-    projects: [project],
   });
-  const initialOrgData = {
+  const initialData = initializeOrg({
     organization,
     router: {
       location: {
         query: {...query},
       },
     },
-    project: parseInt(project.id, 10),
     projects: [],
-  };
-  const initialData = initializeOrg(initialOrgData);
+  });
   const eventView = EventView.fromNewQueryWithLocation(
     {
       id: undefined,
@@ -38,7 +48,7 @@ function initialize(project, query, additionalFeatures: string[] = []) {
     initialData.router.location
   );
 
-  const spanOperationBreakdownFilter = SpanOperationBreakdownFilter.None;
+  const spanOperationBreakdownFilter = SpanOperationBreakdownFilter.NONE;
   const transactionName = 'example-transaction';
 
   return {
@@ -50,29 +60,24 @@ function initialize(project, query, additionalFeatures: string[] = []) {
   };
 }
 
-const WrappedComponent = ({
+function WrappedComponent({
   organization,
-  router,
   ...props
 }: React.ComponentProps<typeof SummaryContent> & {
   router: InjectedRouter<Record<string, string>, any>;
-}) => {
+}) {
   return (
-    <OrganizationContext.Provider value={organization}>
-      <RouteContext.Provider value={{router, ...router}}>
-        <MEPSettingProvider>
-          <SummaryContent organization={organization} {...props} />
-        </MEPSettingProvider>
-      </RouteContext.Provider>
-    </OrganizationContext.Provider>
+    <MEPSettingProvider>
+      <SummaryContent organization={organization} {...props} />
+    </MEPSettingProvider>
   );
-};
+}
 
 describe('Transaction Summary Content', function () {
   beforeEach(function () {
     MockApiClient.addMockResponse({
       method: 'GET',
-      url: '/prompts-activity/',
+      url: '/organizations/org-slug/prompts-activity/',
       body: {},
     });
     MockApiClient.addMockResponse({
@@ -88,7 +93,7 @@ describe('Transaction Summary Content', function () {
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/issues/?limit=5&query=is%3Aunresolved%20transaction%3Aexample-transaction&sort=new&statsPeriod=14d',
+      url: '/organizations/org-slug/issues/?limit=5&query=is%3Aunresolved%20transaction%3Aexample-transaction&sort=trends&statsPeriod=14d',
       body: [],
     });
     MockApiClient.addMockResponse({
@@ -129,14 +134,73 @@ describe('Transaction Summary Content', function () {
         },
       ],
     });
+    MockApiClient.addMockResponse({
+      url: `/projects/org-slug/project-slug/profiling/functions/`,
+      body: {functions: []},
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/dynamic-sampling/custom-rules/',
+      body: '',
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/profiling/flamegraph/',
+      body: {
+        activeProfileIndex: 0,
+        metadata: {
+          deviceClassification: '',
+          deviceLocale: '',
+          deviceManufacturer: '',
+          deviceModel: '',
+          deviceOSName: '',
+          deviceOSVersion: '',
+          durationNS: 0,
+          organizationID: 0,
+          platform: '',
+          profileID: '',
+          projectID: 0,
+          received: '0001-01-01T00:00:00Z',
+          sampled: false,
+          timestamp: '0001-01-01T00:00:00Z',
+          traceID: '',
+          transactionID: '',
+          transactionName: '',
+          version: '',
+        },
+        platform: '',
+        profiles: [
+          {
+            endValue: 0,
+            isMainThread: true,
+            name: '',
+            samples: [],
+            startValue: 0,
+            threadID: 0,
+            type: 'sampled',
+            unit: 'count',
+            weights: [],
+            sample_durations_ns: null,
+          },
+        ],
+        projectID: 0,
+        shared: {
+          frames: [],
+        },
+        transactionName: '',
+        metrics: [],
+      },
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/recent-searches/',
+      body: [],
+    });
   });
 
   afterEach(function () {
     MockApiClient.clearMockResponses();
   });
 
-  it('performs basic rendering', function () {
-    const project = TestStubs.Project();
+  it('performs basic rendering', async function () {
+    const project = ProjectFixture();
     const {
       organization,
       location,
@@ -144,8 +208,7 @@ describe('Transaction Summary Content', function () {
       spanOperationBreakdownFilter,
       transactionName,
       router,
-    } = initialize(project, {});
-    const routerContext = TestStubs.routerContext([{organization}]);
+    } = initialize({});
 
     render(
       <WrappedComponent
@@ -161,12 +224,14 @@ describe('Transaction Summary Content', function () {
         onChangeFilter={() => {}}
         router={router}
       />,
-      {context: routerContext}
+      {router, organization}
     );
 
-    expect(screen.getByTestId('page-filter-environment-selector')).toBeInTheDocument();
+    expect(
+      await screen.findByTestId('page-filter-environment-selector')
+    ).toBeInTheDocument();
     expect(screen.getByTestId('page-filter-timerange-selector')).toBeInTheDocument();
-    expect(screen.getByTestId('smart-search-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('search-query-builder')).toBeInTheDocument();
     expect(screen.getByTestId('transaction-summary-charts')).toBeInTheDocument();
     expect(screen.getByRole('heading', {name: /user misery/i})).toBeInTheDocument();
 

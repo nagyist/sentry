@@ -1,17 +1,10 @@
-import {useCallback, useRef} from 'react';
-import {findDOMNode} from 'react-dom';
+import {useCallback, useId} from 'react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
-import Clipboard from 'sentry/components/clipboard';
-import {
-  Input,
-  InputGroup,
-  InputProps,
-  InputTrailingItems,
-} from 'sentry/components/inputGroup';
-import {IconCopy} from 'sentry/icons';
-import space from 'sentry/styles/space';
+import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
+import type {InputProps} from 'sentry/components/inputGroup';
+import {InputGroup} from 'sentry/components/inputGroup';
+import {space} from 'sentry/styles/space';
 import {selectText} from 'sentry/utils/selectText';
 
 interface Props extends Omit<InputProps, 'onCopy'> {
@@ -21,7 +14,7 @@ interface Props extends Omit<InputProps, 'onCopy'> {
   children: string;
   className?: string;
   disabled?: boolean;
-  onCopy?: (value: string, event: React.MouseEvent) => void;
+  onCopy?: (value: string) => void;
   /**
    * Always show the ending of a long overflowing text in input
    */
@@ -39,45 +32,21 @@ function TextCopyInput({
   children,
   ...inputProps
 }: Props) {
-  const textRef = useRef<HTMLInputElement>(null);
+  const textNodeId = useId();
 
   const handleSelectText = useCallback(() => {
-    if (!textRef.current) {
+    const node = document.getElementById(textNodeId) as HTMLInputElement | null;
+    if (!node) {
       return;
     }
 
-    // We use findDOMNode here because `this.textRef` is not a dom node,
-    // it's a ref to AutoSelectText
-    const node = findDOMNode(textRef.current); // eslint-disable-line react/no-find-dom-node
-    if (!node || !(node instanceof HTMLElement)) {
-      return;
-    }
-
-    if (rtl && node instanceof HTMLInputElement) {
+    if (rtl) {
       // we don't want to select the first character - \u202A, nor the last - \u202C
       node.setSelectionRange(1, node.value.length - 1);
     } else {
       selectText(node);
     }
-  }, [rtl]);
-
-  /**
-   * Select text when copy button is clicked
-   */
-  const handleCopyClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (!textRef.current) {
-        return;
-      }
-
-      handleSelectText();
-
-      onCopy?.(children, e);
-
-      e.stopPropagation();
-    },
-    [handleSelectText, children, onCopy]
-  );
+  }, [rtl, textNodeId]);
 
   /**
    * We are using direction: rtl; to always show the ending of a long overflowing text in input.
@@ -92,9 +61,9 @@ function TextCopyInput({
   return (
     <InputGroup className={className}>
       <StyledInput
+        id={textNodeId}
         readOnly
         disabled={disabled}
-        ref={textRef}
         style={style}
         value={inputValue}
         onClick={handleSelectText}
@@ -102,25 +71,25 @@ function TextCopyInput({
         rtl={rtl}
         {...inputProps}
       />
-      <InputTrailingItems>
-        <Clipboard hideUnsupported value={children}>
-          <StyledCopyButton borderless disabled={disabled} onClick={handleCopyClick}>
-            <IconCopy size={size === 'xs' ? 'xs' : 'sm'} />
-          </StyledCopyButton>
-        </Clipboard>
-      </InputTrailingItems>
+      <InputGroup.TrailingItems>
+        <StyledCopyButton
+          borderless
+          iconSize={size === 'xs' ? 'xs' : 'sm'}
+          onCopy={onCopy}
+          text={children}
+        />
+      </InputGroup.TrailingItems>
     </InputGroup>
   );
 }
 
 export default TextCopyInput;
 
-export const StyledInput = styled(Input)<{rtl?: boolean}>`
+const StyledInput = styled(InputGroup.Input)<{rtl?: boolean}>`
   direction: ${p => (p.rtl ? 'rtl' : 'ltr')};
 `;
 
-export const StyledCopyButton = styled(Button)`
-  color: ${p => p.theme.subText};
+const StyledCopyButton = styled(CopyToClipboardButton)`
   padding: ${space(0.5)};
   min-height: 0;
   height: auto;

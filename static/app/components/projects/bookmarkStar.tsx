@@ -1,11 +1,15 @@
 import {useState} from 'react';
+import styled from '@emotion/styled';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 import {update} from 'sentry/actionCreators/projects';
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import {IconStar} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {useMutation} from 'sentry/utils/queryClient';
 import useApi from 'sentry/utils/useApi';
 
 type Props = {
@@ -16,36 +20,56 @@ type Props = {
 };
 
 function BookmarkStar({className, organization, project, onToggle}: Props) {
-  const api = useApi();
+  const api = useApi({persistInFlight: true});
   const [isBookmarked, setIsBookmarked] = useState(project.isBookmarked);
 
-  const handleBookmarkToggle = (event: React.MouseEvent) => {
-    // prevent dropdowns from closing
-    event.stopPropagation();
+  const {mutate: handleBookmarkToggle, isPending: isBookmarking} = useMutation({
+    mutationFn: (variables: {isBookmarked: boolean}) => {
+      return update(api, {
+        orgId: organization.slug,
+        projectId: project.slug,
+        data: {isBookmarked: variables.isBookmarked},
+      });
+    },
+    onMutate: variables => {
+      onToggle?.(variables.isBookmarked);
+      setIsBookmarked(variables.isBookmarked);
+    },
+    onError: (_data, variables) => {
+      addErrorMessage(t('Unable to toggle bookmark for %s', project.slug));
+      setIsBookmarked(!variables.isBookmarked);
+    },
+  });
 
-    update(api, {
-      orgId: organization.slug,
-      projectId: project.slug,
-      data: {isBookmarked: !isBookmarked},
-    }).catch(() => addErrorMessage(t('Unable to toggle bookmark for %s', project.slug)));
-
-    setIsBookmarked(current => !current);
-    onToggle?.(!isBookmarked);
-  };
+  const label = isBookmarked ? t('Remove Bookmark') : t('Bookmark');
 
   return (
-    <Button
-      aria-label={t('Bookmark Project')}
+    <BookmarkStarButton
+      title={label}
+      aria-label={label}
       aria-pressed={isBookmarked}
-      onClick={handleBookmarkToggle}
+      busy={isBookmarking}
+      onClick={() => handleBookmarkToggle({isBookmarked: !isBookmarked})}
       size="zero"
-      priority="link"
+      borderless
       className={className}
       icon={
-        <IconStar color={isBookmarked ? 'yellow400' : 'subText'} isSolid={isBookmarked} />
+        <IconStar color={isBookmarked ? 'yellow300' : 'subText'} isSolid={isBookmarked} />
       }
     />
   );
 }
+
+const BookmarkStarButton = styled(Button)`
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  margin: -${space(0.5)};
+
+  svg {
+    /* Negative margin for visual centering within the button */
+    margin-top: -1px;
+  }
+`;
 
 export default BookmarkStar;

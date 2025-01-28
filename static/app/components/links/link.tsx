@@ -1,11 +1,14 @@
-import {forwardRef, useContext, useEffect} from 'react';
-import {Link as RouterLink} from 'react-router';
+import {forwardRef} from 'react';
+import {
+  Link as RouterLink,
+  type LinkProps as ReactRouterLinkProps,
+} from 'react-router-dom';
 import styled from '@emotion/styled';
-import * as Sentry from '@sentry/react';
-import {Location, LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
-import {RouteContext} from 'sentry/views/routeContext';
+import {locationDescriptorToTo} from 'sentry/utils/reactRouter6Compat/location';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {useLocation} from 'sentry/utils/useLocation';
 
 import {linkStyles} from './styles';
 
@@ -15,9 +18,15 @@ export interface LinkProps
     'href' | 'target' | 'as' | 'css'
   > {
   /**
-   * The string path or LocationDescriptor object
+   * The string path or LocationDescriptor object.
+   *
+   * If your link target is a string literal or a `LocationDescriptor` with
+   * a literal `pathname`, you need to use the slug based URL
+   * e.g `/organizations/${slug}/issues/`. This ensures that your link will
+   * work in environments that do have customer-domains (saas) and those without
+   * customer-domains (single-tenant).
    */
-  to: ((location: Location) => LocationDescriptor) | LocationDescriptor;
+  to: LocationDescriptor;
   /**
    * Style applied to the component's root
    */
@@ -30,6 +39,7 @@ export interface LinkProps
    * Forwarded ref
    */
   forwardedRef?: React.Ref<HTMLAnchorElement>;
+  state?: ReactRouterLinkProps['state'];
 }
 
 /**
@@ -37,21 +47,13 @@ export interface LinkProps
  * back to <a> if there is no router present
  */
 function BaseLink({disabled, to, forwardedRef, ...props}: LinkProps): React.ReactElement {
-  const route = useContext(RouteContext);
-  const location = route?.location;
-  useEffect(() => {
-    // check if the router is present
-    if (!(route && location)) {
-      Sentry.captureException(
-        new Error('The link component was rendered without being wrapped by a <Router />')
-      );
-    }
-  }, [route, location]);
-
+  const location = useLocation();
   to = normalizeUrl(to, location);
 
   if (!disabled && location) {
-    return <RouterLink to={to} ref={forwardedRef as any} {...props} />;
+    return (
+      <RouterLink to={locationDescriptorToTo(to)} ref={forwardedRef as any} {...props} />
+    );
   }
 
   return <a href={typeof to === 'string' ? to : ''} ref={forwardedRef} {...props} />;

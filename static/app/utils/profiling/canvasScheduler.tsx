@@ -1,23 +1,30 @@
 import {useEffect, useMemo} from 'react';
-import {mat3} from 'gl-matrix';
+import type {mat3} from 'gl-matrix';
 
-import {Rect} from './gl/utils';
-import {FlamegraphFrame} from './flamegraphFrame';
-import {SpanChartNode} from './spanChart';
+import type {CanvasView} from 'sentry/utils/profiling/canvasView';
+
+import type {FlamegraphFrame} from './flamegraphFrame';
+import type {SpanChartNode} from './spanChart';
+import type {Rect} from './speedscope';
+import type {UIFrameNode} from './uiFrames';
 
 type DrawFn = () => void;
 type ArgumentTypes<F> = F extends (...args: infer A) => any ? A : never;
 
 export interface FlamegraphEvents {
   ['highlight frame']: (
-    frame: FlamegraphFrame[] | null,
+    frames: FlamegraphFrame[] | null,
     mode: 'hover' | 'selected'
   ) => void;
-  ['highlight span']: (frame: SpanChartNode[] | null, mode: 'hover' | 'selected') => void;
+  ['highlight span']: (spans: SpanChartNode[] | null, mode: 'hover' | 'selected') => void;
+  ['highlight ui frame']: (
+    frames: UIFrameNode[] | null,
+    mode: 'hover' | 'selected'
+  ) => void;
   ['reset zoom']: () => void;
-  ['set config view']: (configView: Rect) => void;
+  ['set config view']: (configView: Rect, source: CanvasView<any>) => void;
   ['show in table view']: (frame: FlamegraphFrame) => void;
-  ['transform config view']: (transform: mat3) => void;
+  ['transform config view']: (transform: mat3, source: CanvasView<any>) => void;
   ['zoom at frame']: (frame: FlamegraphFrame, strategy: 'min' | 'exact') => void;
   ['zoom at span']: (frame: SpanChartNode, strategy: 'min' | 'exact') => void;
 }
@@ -36,6 +43,7 @@ export class CanvasScheduler {
     ['reset zoom']: new Set<FlamegraphEvents['reset zoom']>(),
     ['highlight frame']: new Set<FlamegraphEvents['highlight frame']>(),
     ['highlight span']: new Set<FlamegraphEvents['highlight span']>(),
+    ['highlight ui frame']: new Set<FlamegraphEvents['highlight ui frame']>(),
     ['set config view']: new Set<FlamegraphEvents['set config view']>(),
     ['transform config view']: new Set<FlamegraphEvents['transform config view']>(),
     ['zoom at frame']: new Set<FlamegraphEvents['zoom at frame']>(),
@@ -71,7 +79,7 @@ export class CanvasScheduler {
     ...args: ArgumentTypes<FlamegraphEvents[K]>
   ): void {
     for (const handler of this.events[event]) {
-      // @ts-ignore
+      // @ts-expect-error TS(2556): A spread argument must either have a tuple type or... Remove this comment to see the full error message
       handler(...args);
     }
   }
@@ -108,6 +116,7 @@ export class CanvasScheduler {
       cb();
     }
     for (const type in this.events) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       this.events[type].clear();
     }
   }

@@ -1,10 +1,10 @@
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
-import {FieldGroupProps} from './types';
+import type {FieldGroupProps} from './types';
 
-type FieldHelpProps = Pick<FieldGroupProps, 'inline' | 'stacked'>;
+interface FieldHelpProps extends Pick<FieldGroupProps, 'inline' | 'stacked'> {}
 
 const FieldHelp = styled('div')<FieldHelpProps>`
   color: ${p => p.theme.subText};

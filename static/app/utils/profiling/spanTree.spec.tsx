@@ -1,4 +1,5 @@
-import {EntrySpans, EventOrGroupType, EventTransaction} from 'sentry/types/event';
+import type {EntrySpans, EventTransaction} from 'sentry/types/event';
+import {EventOrGroupType} from 'sentry/types/event';
 
 import {SpanTree} from './spanTree';
 
@@ -82,9 +83,46 @@ describe('SpanTree', () => {
         }),
       ]
     );
-    expect(tree.orphanedSpans.length).toBe(0);
-    expect(tree.root.children[0].span.span_id).toBe('1');
-    expect(tree.root.children[0].children[0].span.span_id).toBe('2');
+    expect(tree.orphanedSpans).toHaveLength(0);
+    expect(tree.root.children[0]!.span.span_id).toBe('1');
+    expect(tree.root.children[0]!.children[0]!.span.span_id).toBe('2');
+  });
+
+  it('checks for span overlaps that contains span', () => {
+    const start = Date.now();
+    const tree = new SpanTree(
+      txn({
+        title: 'transaction root',
+        startTimestamp: start,
+        endTimestamp: start + 10,
+        contexts: {trace: {span_id: 'root'}},
+      }),
+      [
+        s({
+          span_id: '1',
+          parent_span_id: 'root',
+          timestamp: start + 10,
+          start_timestamp: start,
+        }),
+        s({
+          span_id: '2',
+          parent_span_id: '1',
+          timestamp: start + 5,
+          start_timestamp: start,
+        }),
+        s({
+          span_id: '3',
+          parent_span_id: '1',
+          timestamp: start + 6,
+          start_timestamp: start + 1,
+        }),
+      ]
+    );
+
+    expect(tree.orphanedSpans).toHaveLength(1);
+    expect(tree.root.children[0]!.span.span_id).toBe('1');
+    expect(tree.root.children[0]!.children[0]!.span.span_id).toBe('2');
+    expect(tree.root.children[0]!.children[1]).toBeUndefined();
   });
 
   it('creates missing instrumentation node', () => {
@@ -111,10 +149,39 @@ describe('SpanTree', () => {
         }),
       ]
     );
-    expect(tree.orphanedSpans.length).toBe(0);
-    expect(tree.root.children[0].span.span_id).toBe('1');
-    expect(tree.root.children[1].span.op).toBe('missing instrumentation');
-    expect(tree.root.children[2].span.span_id).toBe('2');
+    expect(tree.orphanedSpans).toHaveLength(0);
+    expect(tree.root.children[0]!.span.span_id).toBe('1');
+    expect(tree.root.children[1]!.span.op).toBe('missing span instrumentation');
+    expect(tree.root.children[2]!.span.span_id).toBe('2');
+  });
+
+  it('does not create missing instrumentation if elapsed < threshold', () => {
+    const start = Date.now();
+    const tree = new SpanTree(
+      txn({
+        title: 'transaction root',
+        startTimestamp: start,
+        endTimestamp: start + 10,
+        contexts: {trace: {span_id: 'root'}},
+      }),
+      [
+        s({
+          span_id: '1',
+          parent_span_id: 'root',
+          timestamp: start + 5,
+          start_timestamp: start,
+        }),
+        s({
+          span_id: '2',
+          parent_span_id: 'root',
+          timestamp: start + 10,
+          // There is only 50ms difference here, 100ms is the threshold
+          start_timestamp: start + 5.05,
+        }),
+      ]
+    );
+    expect(tree.root.children[0]!.span.span_id).toBe('1');
+    expect(tree.root.children[1]!.span.span_id).toBe('2');
   });
 
   it('pushes consecutive span', () => {
@@ -142,9 +209,9 @@ describe('SpanTree', () => {
       ]
     );
 
-    expect(tree.orphanedSpans.length).toBe(0);
-    expect(tree.root.children[0].span.span_id).toBe('1');
-    expect(tree.root.children[1].span.span_id).toBe('2');
+    expect(tree.orphanedSpans).toHaveLength(0);
+    expect(tree.root.children[0]!.span.span_id).toBe('1');
+    expect(tree.root.children[1]!.span.span_id).toBe('2');
   });
   it('marks span as orphaned if parent_id does not match', () => {
     const tree = new SpanTree(
@@ -164,6 +231,6 @@ describe('SpanTree', () => {
         }),
       ]
     );
-    expect(tree.orphanedSpans[0].span_id).toBe('2');
+    expect(tree.orphanedSpans[0]!.span_id).toBe('2');
   });
 });

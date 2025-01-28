@@ -1,11 +1,12 @@
 import {useCallback, useEffect} from 'react';
-import {browserHistory} from 'react-router';
 import type {Location} from 'history';
 
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {useLocation} from 'sentry/utils/useLocation';
 
-type Opts = {
+type Opts<Q> = {
   fieldsToClean: string[];
+  shouldClean?: (newLocation: Location<Q>) => boolean;
 };
 
 export function handleRouteLeave<Q extends object>({
@@ -18,6 +19,7 @@ export function handleRouteLeave<Q extends object>({
   oldPathname: string;
 }) {
   const hasSomeValues = fieldsToClean.some(
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     field => newLocation.query[field] !== undefined
   );
 
@@ -29,6 +31,7 @@ export function handleRouteLeave<Q extends object>({
   // not interfere with other pages
   const query = fieldsToClean.reduce(
     (newQuery, field) => {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       newQuery[field] = undefined;
       return newQuery;
     },
@@ -41,18 +44,20 @@ export function handleRouteLeave<Q extends object>({
   });
 }
 
-function useCleanQueryParamsOnRouteLeave({fieldsToClean}: Opts) {
+function useCleanQueryParamsOnRouteLeave<Q>({fieldsToClean, shouldClean}: Opts<Q>) {
   const location = useLocation();
 
   const onRouteLeave = useCallback(
-    newLocation => {
-      handleRouteLeave({
-        fieldsToClean,
-        newLocation,
-        oldPathname: location.pathname,
-      });
+    (newLocation: any) => {
+      if (!shouldClean || shouldClean(newLocation)) {
+        handleRouteLeave({
+          fieldsToClean,
+          newLocation,
+          oldPathname: location.pathname,
+        });
+      }
     },
-    [location.pathname, fieldsToClean]
+    [shouldClean, fieldsToClean, location.pathname]
   );
 
   useEffect(() => {

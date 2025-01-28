@@ -1,35 +1,57 @@
+import type {MouseEvent} from 'react';
 import styled from '@emotion/styled';
 
-import DateTime from 'sentry/components/dateTime';
-import {showPlayerTime} from 'sentry/components/replays/utils';
-import Tooltip from 'sentry/components/tooltip';
+import {DateTime} from 'sentry/components/dateTime';
+import Duration from 'sentry/components/duration/duration';
+import ReplayTooltipTime from 'sentry/components/replays/replayTooltipTime';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconPlay} from 'sentry/icons';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import {useReplayPrefs} from 'sentry/utils/replays/playback/providers/replayPreferencesContext';
 
 type Props = {
   startTimestampMs: number;
-  timestampMs: string | number | Date;
+  timestampMs: number;
   className?: string;
-  format?: 'mm:ss' | 'mm:ss.SSS';
-  onClick?: () => void;
+  onClick?: (event: MouseEvent) => void;
+  precision?: 'sec' | 'ms';
 };
 
-function TimestampButton({
+export default function TimestampButton({
   className,
-  format = 'mm:ss',
+  precision = 'sec',
   onClick,
   startTimestampMs,
   timestampMs,
 }: Props) {
+  const [prefs] = useReplayPrefs();
+  const timestampType = prefs.timestampType;
   return (
-    <Tooltip title={<DateTime date={timestampMs} />}>
+    <Tooltip
+      title={
+        <div>
+          <ReplayTooltipTime
+            timestampMs={timestampMs}
+            startTimestampMs={startTimestampMs}
+          />
+        </div>
+      }
+      skipWrapper
+    >
       <StyledButton
         as={onClick ? 'button' : 'span'}
         onClick={onClick}
         className={className}
       >
         <IconPlay size="xs" />
-        {showPlayerTime(timestampMs, startTimestampMs, format === 'mm:ss.SSS')}
+        {timestampType === 'absolute' ? (
+          <DateTime timeOnly seconds date={timestampMs} />
+        ) : (
+          <Duration
+            duration={[Math.abs(timestampMs - startTimestampMs), 'ms']}
+            precision={precision}
+          />
+        )}
       </StyledButton>
     </Tooltip>
   );
@@ -38,21 +60,14 @@ function TimestampButton({
 const StyledButton = styled('button')`
   background: transparent;
   border: none;
-  color: 'inherit';
-  font-size: ${p => p.theme.fontSizeSmall};
+  color: inherit;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2em;
 
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  align-self: baseline;
   gap: ${space(0.25)};
   padding: 0;
-
-  & > svg {
-    visibility: hidden;
-  }
-  &:hover svg {
-    visibility: visible;
-  }
+  height: 100%;
 `;
-
-export default TimestampButton;

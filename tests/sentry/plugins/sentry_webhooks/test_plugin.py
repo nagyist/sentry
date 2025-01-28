@@ -4,11 +4,14 @@ import pytest
 import responses
 
 from sentry.exceptions import PluginError
-from sentry.models import Rule
+from sentry.models.rule import Rule
 from sentry.plugins.base import Notification
 from sentry.plugins.sentry_webhooks.plugin import WebHooksOptionsForm, WebHooksPlugin, validate_urls
-from sentry.testutils import TestCase
+from sentry.testutils.cases import TestCase
+from sentry.testutils.skips import requires_snuba
 from sentry.utils import json
+
+pytestmark = [requires_snuba]
 
 
 class WebHooksPluginTest(TestCase):
@@ -49,10 +52,7 @@ class WebHooksPluginTest(TestCase):
             content_type="application/json",
         )
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception as exc:
-            assert False, f"'self.plugin.notify' raised an exception {exc}"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 200
@@ -64,10 +64,7 @@ class WebHooksPluginTest(TestCase):
             responses.POST, "http://example.com", body="null", content_type="application/json"
         )
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception as exc:
-            assert False, f"'self.plugin.notify' raised an exception {exc}"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 200
@@ -79,10 +76,7 @@ class WebHooksPluginTest(TestCase):
             responses.POST, "http://example.com", body="1", content_type="application/json"
         )
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception as exc:
-            assert False, f"'self.plugin.notify' raised an exception {exc}"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 200
@@ -95,7 +89,7 @@ class WebHooksPluginTest(TestCase):
         form.is_valid()
 
         with pytest.raises(PluginError):
-            validate_urls(form.cleaned_data.get("urls"))
+            validate_urls(form.cleaned_data["urls"])
 
     @responses.activate
     def test_moved_permanently(self):
@@ -103,10 +97,7 @@ class WebHooksPluginTest(TestCase):
 
         responses.add(responses.POST, "http://example.com", body="<moved permanently", status=301)
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception:
-            assert False, "ValueError: Received unexpected plaintext response for code 301"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 301

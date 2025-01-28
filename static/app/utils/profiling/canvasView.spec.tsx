@@ -7,10 +7,10 @@ import {
 } from 'sentry-test/profiling/utils';
 
 import {CanvasView} from 'sentry/utils/profiling/canvasView';
-import {Flamegraph} from 'sentry/utils/profiling/flamegraph';
+import type {Flamegraph} from 'sentry/utils/profiling/flamegraph';
 import {LightFlamegraphTheme as theme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
 import {FlamegraphCanvas} from 'sentry/utils/profiling/flamegraphCanvas';
-import {Rect} from 'sentry/utils/profiling/gl/utils';
+import {Rect} from 'sentry/utils/profiling/speedscope';
 
 const makeCanvasAndView = (
   canvas: HTMLCanvasElement,
@@ -115,8 +115,9 @@ describe('CanvasView', () => {
       const canvas = makeCanvasMock({
         getContext: jest
           .fn()
-          // @ts-ignore
-          .mockReturnValue(makeContextMock({canvas: {width: 1000, height: 2000}})),
+          .mockReturnValue(
+            makeContextMock({canvas: {width: 1000, height: 2000} as HTMLCanvasElement})
+          ),
       });
 
       const flamegraph = makeFlamegraph({startValue: 0, endValue: 100});
@@ -330,8 +331,8 @@ describe('CanvasView', () => {
         flamegraphCanvas
       );
       // 500 - 500 offset = 0
-      expect(cursor[0]).toEqual(0);
-      expect(cursor[1]).toEqual(25);
+      expect(cursor[0]).toBe(0);
+      expect(cursor[1]).toBe(25);
     });
     it('getTransformedConfigViewCursor', () => {
       const canvas = makeCanvasMock({width: 1000, height: 1000});
@@ -359,8 +360,8 @@ describe('CanvasView', () => {
         flamegraphCanvas
       );
 
-      expect(cursor[0]).toEqual(600);
-      expect(cursor[1]).toEqual(25);
+      expect(cursor[0]).toBe(600);
+      expect(cursor[1]).toBe(25);
     });
   });
 });

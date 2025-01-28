@@ -1,18 +1,18 @@
-import {CSSProperties, useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import type {CSSProperties} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from '@emotion/styled';
 import {vec2} from 'gl-matrix';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {FlamegraphContextMenu} from 'sentry/components/profiling/flamegraph/flamegraphContextMenu';
 import {FlamegraphTooltip} from 'sentry/components/profiling/flamegraph/flamegraphTooltip';
 import {t} from 'sentry/locale';
-import {
+import type {
   CanvasPoolManager,
-  useCanvasScheduler,
+  CanvasScheduler,
 } from 'sentry/utils/profiling/canvasScheduler';
-import {CanvasView} from 'sentry/utils/profiling/canvasView';
-import {DifferentialFlamegraph} from 'sentry/utils/profiling/differentialFlamegraph';
-import {Flamegraph} from 'sentry/utils/profiling/flamegraph';
+import type {CanvasView} from 'sentry/utils/profiling/canvasView';
+import type {DifferentialFlamegraph} from 'sentry/utils/profiling/differentialFlamegraph';
+import type {Flamegraph} from 'sentry/utils/profiling/flamegraph';
 import {handleFlamegraphKeyboardNavigation} from 'sentry/utils/profiling/flamegraph/flamegraphKeyboardNavigation';
 import {useFlamegraphSearch} from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphSearch';
 import {
@@ -20,21 +20,22 @@ import {
   useFlamegraphState,
 } from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphState';
 import {useFlamegraphTheme} from 'sentry/utils/profiling/flamegraph/useFlamegraphTheme';
-import {FlamegraphCanvas} from 'sentry/utils/profiling/flamegraphCanvas';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {FlamegraphCanvas} from 'sentry/utils/profiling/flamegraphCanvas';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
 import {
+  computeMinZoomConfigViewForFrames,
   getConfigViewTranslationBetweenVectors,
   getPhysicalSpacePositionFromOffset,
-  Rect,
 } from 'sentry/utils/profiling/gl/utils';
 import {useContextMenu} from 'sentry/utils/profiling/hooks/useContextMenu';
 import {useInternalFlamegraphDebugMode} from 'sentry/utils/profiling/hooks/useInternalFlamegraphDebugMode';
-import {FlamegraphRenderer} from 'sentry/utils/profiling/renderers/flamegraphRenderer';
+import type {ProfileGroup} from 'sentry/utils/profiling/profile/importProfile';
+import type {FlamegraphRenderer} from 'sentry/utils/profiling/renderers/flamegraphRenderer';
+import {FlamegraphTextRenderer} from 'sentry/utils/profiling/renderers/flamegraphTextRenderer';
 import {GridRenderer} from 'sentry/utils/profiling/renderers/gridRenderer';
 import {SampleTickRenderer} from 'sentry/utils/profiling/renderers/sampleTickRenderer';
 import {SelectedFrameRenderer} from 'sentry/utils/profiling/renderers/selectedFrameRenderer';
-import {TextRenderer} from 'sentry/utils/profiling/renderers/textRenderer';
-import {useProfileGroup} from 'sentry/views/profiling/profileGroupProvider';
+import {Rect} from 'sentry/utils/profiling/speedscope';
 
 import {useCanvasScroll} from './interactions/useCanvasScroll';
 import {useCanvasZoomOrScroll} from './interactions/useCanvasZoomOrScroll';
@@ -42,8 +43,9 @@ import {useDrawHoveredBorderEffect} from './interactions/useDrawHoveredBorderEff
 import {useDrawSelectedBorderEffect} from './interactions/useDrawSelectedBorderEffect';
 import {useInteractionViewCheckPoint} from './interactions/useInteractionViewCheckPoint';
 import {useWheelCenterZoom} from './interactions/useWheelCenterZoom';
+import type {FlamegraphContextMenuProps} from './flamegraphContextMenu';
 
-function isHighlightingAllOccurences(
+function isHighlightingAllOccurrences(
   node: FlamegraphFrame | null,
   selectedNodes: FlamegraphFrame[] | null
 ) {
@@ -55,19 +57,43 @@ function isHighlightingAllOccurences(
   );
 }
 
+function makeSourceCodeLink(frame: FlamegraphFrame['frame']): string | undefined {
+  const path = frame.path || frame.file;
+  const lineComponents = (
+    typeof frame.line === 'number' && typeof frame.column === 'number'
+      ? [frame.line, frame.column]
+      : typeof frame.line === 'number'
+        ? [frame.line]
+        : // We assume that a column without a line is not a valid source location
+          []
+  )
+    .filter(n => n !== undefined)
+    .join(':');
+
+  return path + (lineComponents ? `:${lineComponents}` : '');
+}
+
 interface FlamegraphZoomViewProps {
   canvasBounds: Rect;
   canvasPoolManager: CanvasPoolManager;
+  contextMenu: (props: FlamegraphContextMenuProps) => React.ReactElement | null;
   flamegraph: Flamegraph | DifferentialFlamegraph;
   flamegraphCanvas: FlamegraphCanvas | null;
   flamegraphCanvasRef: HTMLCanvasElement | null;
   flamegraphOverlayCanvasRef: HTMLCanvasElement | null;
   flamegraphRenderer: FlamegraphRenderer | null;
   flamegraphView: CanvasView<Flamegraph> | null;
+  profileGroup: ProfileGroup;
+  scheduler: CanvasScheduler;
   setFlamegraphCanvasRef: React.Dispatch<React.SetStateAction<HTMLCanvasElement | null>>;
   setFlamegraphOverlayCanvasRef: React.Dispatch<
     React.SetStateAction<HTMLCanvasElement | null>
   >;
+  disableCallOrderSort?: boolean;
+  disableColorCoding?: boolean;
+  disableGrid?: boolean;
+  disablePanX?: boolean;
+  disableZoom?: boolean;
 }
 
 function FlamegraphZoomView({
@@ -79,11 +105,18 @@ function FlamegraphZoomView({
   flamegraphCanvasRef,
   flamegraphOverlayCanvasRef,
   flamegraphView,
+  profileGroup,
   setFlamegraphCanvasRef,
   setFlamegraphOverlayCanvasRef,
+  contextMenu,
+  scheduler,
+  disablePanX = false,
+  disableZoom = false,
+  disableGrid = false,
+  disableCallOrderSort = false,
+  disableColorCoding = false,
 }: FlamegraphZoomViewProps): React.ReactElement {
   const flamegraphTheme = useFlamegraphTheme();
-  const profileGroup = useProfileGroup();
   const flamegraphSearch = useFlamegraphSearch();
   const isInternalFlamegraphDebugModeEnabled = useInternalFlamegraphDebugMode();
 
@@ -92,21 +125,27 @@ function FlamegraphZoomView({
   >(null);
 
   const dispatch = useDispatchFlamegraphState();
-  const scheduler = useCanvasScheduler(canvasPoolManager);
 
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const [flamegraphState, {previousState, nextState}] = useFlamegraphState();
   const [startInteractionVector, setStartInteractionVector] = useState<vec2 | null>(null);
   const [configSpaceCursor, setConfigSpaceCursor] = useState<vec2 | null>(null);
 
-  const textRenderer: TextRenderer | null = useMemo(() => {
+  const selectedFramesRef = useRef<FlamegraphFrame[] | null>(null);
+
+  const textRenderer: FlamegraphTextRenderer | null = useMemo(() => {
     if (!flamegraphOverlayCanvasRef) {
       return null;
     }
-    return new TextRenderer(flamegraphOverlayCanvasRef, flamegraph, flamegraphTheme);
+    return new FlamegraphTextRenderer(
+      flamegraphOverlayCanvasRef,
+      flamegraphTheme,
+      flamegraph
+    );
   }, [flamegraph, flamegraphOverlayCanvasRef, flamegraphTheme]);
 
   const gridRenderer: GridRenderer | null = useMemo(() => {
-    if (!flamegraphOverlayCanvasRef) {
+    if (!flamegraphOverlayCanvasRef || disableGrid) {
       return null;
     }
     return new GridRenderer(
@@ -114,7 +153,7 @@ function FlamegraphZoomView({
       flamegraphTheme,
       flamegraph.formatter
     );
-  }, [flamegraphOverlayCanvasRef, flamegraph, flamegraphTheme]);
+  }, [flamegraphOverlayCanvasRef, flamegraph, flamegraphTheme, disableGrid]);
 
   const sampleTickRenderer: SampleTickRenderer | null = useMemo(() => {
     if (!isInternalFlamegraphDebugModeEnabled) {
@@ -145,28 +184,15 @@ function FlamegraphZoomView({
     return new SelectedFrameRenderer(flamegraphOverlayCanvasRef);
   }, [flamegraphOverlayCanvasRef]);
 
-  const hoveredNode: FlamegraphFrame | null = useMemo(() => {
-    if (!configSpaceCursor || !flamegraphRenderer) {
-      return null;
-    }
-    return flamegraphRenderer.findHoveredNode(configSpaceCursor);
-  }, [configSpaceCursor, flamegraphRenderer]);
+  const [hoveredNode, setHoveredNode] = useState<FlamegraphFrame | null>(null);
+  const hoveredNodeOnContextMenuOpen = useRef<FlamegraphFrame | null>(null);
+  const contextMenuState = useContextMenu({container: flamegraphCanvasRef});
+  const [highlightingAllOccurrences, setHighlightingAllOccurrences] = useState(
+    isHighlightingAllOccurrences(hoveredNode, selectedFramesRef.current)
+  );
 
   useEffect(() => {
-    if (!flamegraphRenderer) {
-      return;
-    }
-    flamegraphRenderer.setSearchResults(flamegraphSearch.results);
-  }, [flamegraphRenderer, flamegraphSearch.results]);
-
-  useEffect(() => {
-    if (
-      !flamegraphCanvas ||
-      !flamegraphView ||
-      !textRenderer ||
-      !gridRenderer ||
-      !flamegraphRenderer
-    ) {
+    if (!flamegraphCanvas || !flamegraphView || !textRenderer || !flamegraphRenderer) {
       return undefined;
     }
 
@@ -181,18 +207,9 @@ function FlamegraphZoomView({
 
     const drawText = () => {
       textRenderer.draw(
-        flamegraphView.configView.transformRect(flamegraphView.configSpaceTransform),
+        flamegraphView.toOriginConfigView(flamegraphView.configView),
         flamegraphView.fromTransformedConfigView(flamegraphCanvas.physicalSpace),
-        flamegraphSearch.results
-      );
-    };
-
-    const drawGrid = () => {
-      gridRenderer.draw(
-        flamegraphView.configView,
-        flamegraphCanvas.physicalSpace,
-        flamegraphView.fromConfigView(flamegraphCanvas.physicalSpace),
-        flamegraphView.toConfigView(flamegraphCanvas.logicalSpace)
+        flamegraphSearch.results.frames
       );
     };
 
@@ -202,9 +219,21 @@ function FlamegraphZoomView({
       }
       sampleTickRenderer.draw(
         flamegraphView.fromTransformedConfigView(flamegraphCanvas.physicalSpace),
-        flamegraphView.configView
+        flamegraphView.toOriginConfigView(flamegraphView.configView)
       );
     };
+
+    const drawGrid = gridRenderer
+      ? () => {
+          gridRenderer.draw(
+            flamegraphView.configView,
+            flamegraphCanvas.physicalSpace,
+            flamegraphView.fromConfigView(flamegraphCanvas.physicalSpace),
+            flamegraphView.toConfigView(flamegraphCanvas.logicalSpace),
+            flamegraph.profile.type === 'flamechart'
+          );
+        }
+      : undefined;
 
     const drawRectangles = () => {
       flamegraphRenderer.draw(
@@ -215,7 +244,11 @@ function FlamegraphZoomView({
     scheduler.registerBeforeFrameCallback(drawRectangles);
     scheduler.registerBeforeFrameCallback(clearOverlayCanvas);
     scheduler.registerAfterFrameCallback(drawText);
-    scheduler.registerAfterFrameCallback(drawGrid);
+    // We want to register the grid as the last frame callback so that it is drawn on top of everything else,
+    // including text, hovered or clicked nodes, but after the sample tick renderer as those are overlaid on top of it
+    if (drawGrid) {
+      scheduler.registerAfterFrameCallback(drawGrid);
+    }
     scheduler.registerAfterFrameCallback(drawInternalSampleTicks);
 
     scheduler.draw();
@@ -223,8 +256,10 @@ function FlamegraphZoomView({
     return () => {
       scheduler.unregisterBeforeFrameCallback(clearOverlayCanvas);
       scheduler.unregisterAfterFrameCallback(drawText);
-      scheduler.unregisterAfterFrameCallback(drawGrid);
       scheduler.unregisterAfterFrameCallback(drawInternalSampleTicks);
+      if (drawGrid) {
+        scheduler.unregisterAfterFrameCallback(drawGrid);
+      }
       scheduler.unregisterBeforeFrameCallback(drawRectangles);
     };
   }, [
@@ -238,21 +273,57 @@ function FlamegraphZoomView({
     flamegraphRenderer,
     sampleTickRenderer,
     canvasPoolManager,
-    flamegraphSearch,
+    flamegraphSearch.results.frames,
   ]);
 
-  const selectedFramesRef = useRef<FlamegraphFrame[] | null>(null);
-
   useEffect(() => {
-    if (flamegraphState.profiles.highlightFrames) {
-      selectedFramesRef.current = flamegraph.findAllMatchingFrames(
-        flamegraphState.profiles.highlightFrames.name,
-        flamegraphState.profiles.highlightFrames.package
+    if (!flamegraphRenderer) {
+      return;
+    }
+
+    if (flamegraphState.search.highlightFrames) {
+      let frames = flamegraph.findAllMatchingFrames(
+        flamegraphState.search.highlightFrames.name,
+        flamegraphState.search.highlightFrames.package
       );
-    } else {
+
+      // there is a chance that the reason we did not find any frames is because
+      // for node, we try to infer some package from the frontend code.
+      // If that happens, we'll try and just do a search by name. This logic
+      // is duplicated in flamegraph.tsx and should be kept in sync
+      if (
+        !frames.length &&
+        !flamegraphState.search.highlightFrames.package &&
+        flamegraphState.search.highlightFrames.name
+      ) {
+        frames = flamegraph.findAllMatchingFramesBy(
+          flamegraphState.search.highlightFrames.name,
+          ['name']
+        );
+      }
+
+      selectedFramesRef.current = frames;
+    }
+
+    if (flamegraphState.search.query && !flamegraphState.search.highlightFrames) {
+      flamegraphRenderer.setSearchResults(
+        flamegraphState.search.query,
+        flamegraphState.search.results.frames
+      );
       selectedFramesRef.current = null;
     }
-  }, [flamegraph, flamegraphState.profiles.highlightFrames]);
+
+    if (!flamegraphState.search.query && !flamegraphState.search.highlightFrames) {
+      flamegraphRenderer.setSearchResults('', new Map());
+      selectedFramesRef.current = null;
+    }
+  }, [
+    flamegraph,
+    flamegraphRenderer,
+    flamegraphState.search.results.frames,
+    flamegraphState.search.query,
+    flamegraphState.search.highlightFrames,
+  ]);
 
   useInteractionViewCheckPoint({
     view: flamegraphView,
@@ -271,7 +342,11 @@ function FlamegraphZoomView({
 
   useDrawHoveredBorderEffect({
     scheduler,
-    hoveredNode,
+    hoveredNode: hoveredNode
+      ? hoveredNode
+      : contextMenuState.open
+        ? hoveredNodeOnContextMenuOpen.current
+        : null,
     canvas: flamegraphCanvas,
     view: flamegraphView,
     theme: flamegraphTheme,
@@ -285,6 +360,7 @@ function FlamegraphZoomView({
 
     const onResetZoom = () => {
       setConfigSpaceCursor(null);
+      setHoveredNode(null);
     };
 
     const onZoomIntoFrame = (frame: FlamegraphFrame, _strategy: 'min' | 'exact') => {
@@ -292,21 +368,59 @@ function FlamegraphZoomView({
         selectedFramesRef.current = [frame];
       }
       setConfigSpaceCursor(null);
+      setHoveredNode(null);
+    };
+
+    const onHighlightFrame = (
+      frames: FlamegraphFrame[] | null,
+      type: 'hover' | 'selected'
+    ) => {
+      if (type === 'selected') {
+        selectedFramesRef.current = frames;
+      } else {
+        setHoveredNode(frames?.[0] ?? null);
+      }
     };
 
     scheduler.on('reset zoom', onResetZoom);
     scheduler.on('zoom at frame', onZoomIntoFrame);
+    scheduler.on('highlight frame', onHighlightFrame);
 
     return () => {
       scheduler.off('reset zoom', onResetZoom);
       scheduler.off('zoom at frame', onZoomIntoFrame);
+      scheduler.off('highlight frame', onHighlightFrame);
     };
   }, [flamegraphCanvas, canvasPoolManager, dispatch, scheduler, flamegraphView]);
 
+  const previousKeyPress = useRef<{at: number; key: string | null}>({
+    key: null,
+    at: 0,
+  });
   useEffect(() => {
     const onKeyDown = (evt: KeyboardEvent) => {
       if (!flamegraphView) {
         return;
+      }
+
+      if (evt.key === 'Escape') {
+        if (highlightingAllOccurrences) {
+          setHighlightingAllOccurrences(false);
+          dispatch({type: 'set highlight all frames', payload: null});
+          canvasPoolManager.dispatch('highlight frame', [null, 'selected']);
+          previousKeyPress.current = {key: null, at: 0};
+          return;
+        }
+        // We'll keep 300ms as the threshold
+        if (
+          previousKeyPress.current.key === 'Escape' &&
+          previousKeyPress.current.at - performance.now() < 300
+        ) {
+          canvasPoolManager.dispatch('reset zoom', []);
+          previousKeyPress.current = {key: null, at: 0};
+        } else {
+          previousKeyPress.current = {key: evt.key, at: performance.now()};
+        }
       }
 
       if (evt.key === 'z' && evt.metaKey) {
@@ -315,7 +429,7 @@ function FlamegraphZoomView({
         if (action === 'undo') {
           const previousPosition = previousState?.position?.view;
 
-          // If previous position is empty, reset the view to it's max
+          // If previous position is empty, reset the view to its max
           if (previousPosition?.isEmpty()) {
             canvasPoolManager.dispatch('reset zoom', []);
           } else if (
@@ -326,7 +440,10 @@ function FlamegraphZoomView({
             // because the height may have changed due to window resizing and
             // calling it with the old height may result in the flamegraph
             // being drawn into a very small or very large area.
-            canvasPoolManager.dispatch('set config view', [previousPosition]);
+            canvasPoolManager.dispatch('set config view', [
+              previousPosition,
+              flamegraphView,
+            ]);
           }
         }
 
@@ -338,7 +455,7 @@ function FlamegraphZoomView({
             // because the height may have changed due to window resizing and
             // calling it with the old height may result in the flamegraph
             // being drawn into a very small or very large area.
-            canvasPoolManager.dispatch('set config view', [nextPosition]);
+            canvasPoolManager.dispatch('set config view', [nextPosition, flamegraphView]);
           }
         }
 
@@ -365,6 +482,8 @@ function FlamegraphZoomView({
     };
   }, [
     canvasPoolManager,
+    setHighlightingAllOccurrences,
+    highlightingAllOccurrences,
     dispatch,
     nextState,
     previousState,
@@ -381,7 +500,7 @@ function FlamegraphZoomView({
     );
   }, []);
 
-  const onCanvasMouseUp = useCallback(
+  const onCanvasDoubleClick = useCallback(
     (evt: React.MouseEvent<HTMLCanvasElement>) => {
       evt.preventDefault();
       evt.stopPropagation();
@@ -394,31 +513,29 @@ function FlamegraphZoomView({
 
       // Only dispatch the zoom action if the new clicked node is not the same as the old selected node.
       // This essentially tracks double click action on a rectangle
-      if (lastInteraction === 'click') {
-        if (
-          hoveredNode &&
-          selectedFramesRef.current?.length === 1 &&
-          selectedFramesRef.current[0] === hoveredNode
-        ) {
-          // If double click is fired on a node, then zoom into it
-          canvasPoolManager.dispatch('zoom at frame', [hoveredNode, 'exact']);
-          canvasPoolManager.dispatch('show in table view', [hoveredNode]);
+      if (hoveredNode) {
+        // If double click is fired on a node, then zoom into it
+        canvasPoolManager.dispatch('zoom at frame', [hoveredNode, 'exact']);
+        canvasPoolManager.dispatch('show in table view', [hoveredNode]);
+        canvasPoolManager.dispatch('highlight frame', [[hoveredNode], 'selected']);
+        flamegraphRenderer?.setSearchResults('', new Map());
+      } else {
+        canvasPoolManager.dispatch('highlight frame', [null, 'selected']);
+        if (!flamegraphSearch.query) {
+          flamegraphRenderer?.setSearchResults('', new Map());
         }
-
-        dispatch({
-          type: 'set highlight all frames',
-          payload: null,
-        });
-        canvasPoolManager.dispatch('highlight frame', [
-          hoveredNode ? [hoveredNode] : null,
-          'selected',
-        ]);
       }
 
-      setLastInteraction(null);
+      setLastInteraction('click');
       setStartInteractionVector(null);
     },
-    [configSpaceCursor, dispatch, hoveredNode, canvasPoolManager, lastInteraction]
+    [
+      configSpaceCursor,
+      hoveredNode,
+      canvasPoolManager,
+      flamegraphRenderer,
+      flamegraphSearch.query,
+    ]
   );
 
   const onMouseDrag = useCallback(
@@ -438,7 +555,7 @@ function FlamegraphZoomView({
         return;
       }
 
-      canvasPoolManager.dispatch('transform config view', [configDelta]);
+      canvasPoolManager.dispatch('transform config view', [configDelta, flamegraphView]);
       setStartInteractionVector(
         getPhysicalSpacePositionFromOffset(
           evt.nativeEvent.offsetX,
@@ -455,12 +572,12 @@ function FlamegraphZoomView({
         return;
       }
 
-      setConfigSpaceCursor(
-        flamegraphView.getTransformedConfigViewCursor(
-          vec2.fromValues(evt.nativeEvent.offsetX, evt.nativeEvent.offsetY),
-          flamegraphCanvas
-        )
+      const cursor = flamegraphView.getTransformedConfigViewCursor(
+        vec2.fromValues(evt.nativeEvent.offsetX, evt.nativeEvent.offsetY),
+        flamegraphCanvas
       );
+      setConfigSpaceCursor(cursor);
+      setHoveredNode(flamegraphRenderer?.findHoveredNode(cursor) ?? null);
 
       if (startInteractionVector) {
         onMouseDrag(evt);
@@ -472,14 +589,27 @@ function FlamegraphZoomView({
     [
       flamegraphCanvas,
       flamegraphView,
-      setConfigSpaceCursor,
+      flamegraphRenderer,
       onMouseDrag,
+      setConfigSpaceCursor,
       startInteractionVector,
     ]
   );
 
+  const onCanvasMouseUp = useCallback(() => {
+    // If double click is fired on a node, then zoom into it
+    canvasPoolManager.dispatch('highlight frame', [
+      hoveredNode ? [hoveredNode] : null,
+      'selected',
+    ]);
+
+    setLastInteraction(null);
+    setStartInteractionVector(null);
+  }, [hoveredNode, canvasPoolManager]);
+
   const onCanvasMouseLeave = useCallback(() => {
     setConfigSpaceCursor(null);
+    setHoveredNode(null);
     setStartInteractionVector(null);
     setLastInteraction(null);
   }, []);
@@ -487,17 +617,17 @@ function FlamegraphZoomView({
   const onWheelCenterZoom = useWheelCenterZoom(
     flamegraphCanvas,
     flamegraphView,
-    canvasPoolManager
+    canvasPoolManager,
+    disableZoom
   );
   const onCanvasScroll = useCanvasScroll(
     flamegraphCanvas,
     flamegraphView,
-    canvasPoolManager
+    canvasPoolManager,
+    disablePanX
   );
 
   useCanvasZoomOrScroll({
-    lastInteraction,
-    configSpaceCursor,
     setConfigSpaceCursor,
     setLastInteraction,
     handleWheel: onWheelCenterZoom,
@@ -505,57 +635,106 @@ function FlamegraphZoomView({
     canvas: flamegraphCanvasRef,
   });
 
-  const hoveredNodeOnContextMenuOpen = useRef<FlamegraphFrame | null>(null);
-  const contextMenu = useContextMenu({container: flamegraphCanvasRef});
-  const [highlightingAllOccurences, setHighlightingAllOccurences] = useState(
-    isHighlightingAllOccurences(hoveredNode, selectedFramesRef.current)
-  );
+  // When a user click anywhere outside the spans, clear cursor and selected node
+  useEffect(() => {
+    const onClickOutside = (evt: MouseEvent) => {
+      if (
+        !canvasContainerRef.current ||
+        canvasContainerRef.current.contains(evt.target as Node)
+      ) {
+        return;
+      }
+      if (contextMenuState.open) {
+        evt.preventDefault();
+        evt.stopPropagation();
+      }
+
+      setConfigSpaceCursor(null);
+      setHoveredNode(null);
+    };
+
+    document.addEventListener('click', onClickOutside);
+
+    return () => {
+      document.removeEventListener('click', onClickOutside);
+    };
+  }, [canvasContainerRef, contextMenuState, canvasPoolManager]);
 
   const handleContextMenuOpen = useCallback(
     (event: React.MouseEvent) => {
       hoveredNodeOnContextMenuOpen.current = hoveredNode;
-      contextMenu.handleContextMenu(event);
+      contextMenuState.handleContextMenu(event);
       // Make sure we set the highlight state relative to the newly hovered node
-      setHighlightingAllOccurences(
-        isHighlightingAllOccurences(hoveredNode, selectedFramesRef.current)
+      setHighlightingAllOccurrences(
+        isHighlightingAllOccurrences(hoveredNode, selectedFramesRef.current)
       );
     },
-    [contextMenu, hoveredNode]
+    [contextMenuState, hoveredNode]
   );
 
   const handleHighlightAllFramesClick = useCallback(() => {
-    if (!hoveredNodeOnContextMenuOpen.current) {
+    if (!hoveredNodeOnContextMenuOpen.current || !flamegraphView) {
       return;
     }
 
-    // If all occurences are currently being highlighted, we want to unhighlight them now
+    // If all Occurrences are currently being highlighted, we want to unhighlight them now
     if (
-      isHighlightingAllOccurences(
+      isHighlightingAllOccurrences(
         hoveredNodeOnContextMenuOpen.current,
         selectedFramesRef.current
       )
     ) {
-      setHighlightingAllOccurences(false);
+      setHighlightingAllOccurrences(false);
       dispatch({type: 'set highlight all frames', payload: null});
       canvasPoolManager.dispatch('highlight frame', [null, 'selected']);
-      scheduler.draw();
       return;
     }
 
-    setHighlightingAllOccurences(true);
+    setHighlightingAllOccurrences(true);
+
+    const frameName = hoveredNodeOnContextMenuOpen.current.frame.name;
+    const packageName =
+      hoveredNodeOnContextMenuOpen.current.frame.package ??
+      hoveredNodeOnContextMenuOpen.current.frame.module ??
+      '';
+
     dispatch({
       type: 'set highlight all frames',
       payload: {
-        name: hoveredNodeOnContextMenuOpen.current.frame.name,
-        package: hoveredNodeOnContextMenuOpen.current.frame.image ?? '',
+        name: frameName,
+        package: packageName,
       },
     });
 
-    canvasPoolManager.dispatch('highlight frame', [
-      flamegraph.findAllMatchingFrames(hoveredNodeOnContextMenuOpen.current),
-      'selected',
-    ]);
-  }, [canvasPoolManager, flamegraph, scheduler, dispatch]);
+    let frames = flamegraph.findAllMatchingFrames(frameName, packageName);
+    if (
+      !frames.length &&
+      !packageName &&
+      frameName &&
+      profileGroup.metadata.platform === 'node'
+    ) {
+      // there is a chance that the reason we did not find any frames is because
+      // for node, we try to infer some package from the frontend code.
+      // If that happens, we'll try and just do a search by name. This logic
+      // is duplicated in flamegraphZoomView.tsx and should be kept in sync
+      frames = flamegraph.findAllMatchingFramesBy(frameName, ['name']);
+    }
+
+    const rectFrames = frames.map(f => new Rect(f.start, f.depth, f.end - f.start, 1));
+    const newConfigView = computeMinZoomConfigViewForFrames(
+      flamegraphView.configView,
+      rectFrames
+    ).transformRect(flamegraphView.configSpaceTransform);
+
+    canvasPoolManager.dispatch('highlight frame', [frames, 'selected']);
+    canvasPoolManager.dispatch('set config view', [newConfigView, flamegraphView]);
+  }, [
+    canvasPoolManager,
+    flamegraph,
+    flamegraphView,
+    dispatch,
+    profileGroup.metadata.platform,
+  ]);
 
   const handleCopyFunctionName = useCallback(() => {
     if (!hoveredNodeOnContextMenuOpen.current) {
@@ -572,44 +751,68 @@ function FlamegraphZoomView({
       });
   }, []);
 
+  const handleCopyFunctionSource = useCallback(() => {
+    if (!hoveredNodeOnContextMenuOpen.current) {
+      return;
+    }
+
+    const frame = hoveredNodeOnContextMenuOpen.current.frame;
+    const link = makeSourceCodeLink(frame);
+
+    if (!link) {
+      addErrorMessage(t('Failed to resolve path for this function frame.'));
+      return;
+    }
+
+    navigator.clipboard
+      .writeText(link)
+      .then(() => {
+        addSuccessMessage(t('Function source copied to clipboard'));
+      })
+      .catch(() => {
+        addErrorMessage(t('Failed to copy function source to clipboard'));
+      });
+  }, []);
+
   return (
-    <CanvasContainer>
+    <CanvasContainer ref={canvasContainerRef}>
       <Canvas
         ref={setFlamegraphCanvasRef}
         onMouseDown={onCanvasMouseDown}
-        onMouseUp={onCanvasMouseUp}
         onMouseMove={onCanvasMouseMove}
         onMouseLeave={onCanvasMouseLeave}
+        onMouseUp={onCanvasMouseUp}
+        onDoubleClick={onCanvasDoubleClick}
         onContextMenu={handleContextMenuOpen}
         cursor={lastInteraction === 'pan' ? 'grabbing' : 'default'}
         tabIndex={1}
       />
       <Canvas ref={setFlamegraphOverlayCanvasRef} pointerEvents="none" />
-      <FlamegraphContextMenu
-        contextMenu={contextMenu}
-        profileGroup={profileGroup.type === 'resolved' ? profileGroup.data : null}
-        hoveredNode={hoveredNodeOnContextMenuOpen.current}
-        isHighlightingAllOccurences={highlightingAllOccurences}
-        onCopyFunctionNameClick={handleCopyFunctionName}
-        onHighlightAllOccurencesClick={handleHighlightAllFramesClick}
-      />
+      {contextMenu({
+        contextMenu: contextMenuState,
+        profileGroup,
+        hoveredNode: hoveredNodeOnContextMenuOpen.current,
+        isHighlightingAllOccurrences: highlightingAllOccurrences,
+        onCopyFunctionNameClick: handleCopyFunctionName,
+        onCopyFunctionSource: handleCopyFunctionSource,
+        onHighlightAllOccurrencesClick: handleHighlightAllFramesClick,
+        disableCallOrderSort,
+        disableColorCoding,
+      })}
       {flamegraphCanvas &&
       flamegraphRenderer &&
       flamegraphView &&
       configSpaceCursor &&
       hoveredNode ? (
         <FlamegraphTooltip
+          flamegraph={flamegraph}
           frame={hoveredNode}
           configSpaceCursor={configSpaceCursor}
           flamegraphCanvas={flamegraphCanvas}
           flamegraphRenderer={flamegraphRenderer}
           flamegraphView={flamegraphView}
           canvasBounds={canvasBounds}
-          platform={
-            profileGroup.type === 'resolved'
-              ? profileGroup.data.metadata.platform
-              : undefined
-          }
+          platform={profileGroup.metadata.platform}
         />
       ) : null}
     </CanvasContainer>
@@ -620,6 +823,7 @@ const CanvasContainer = styled('div')`
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
   position: relative;
 `;
 

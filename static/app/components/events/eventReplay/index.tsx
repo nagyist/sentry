@@ -1,55 +1,48 @@
-import {useCallback} from 'react';
+import {lazy} from 'react';
 
 import ErrorBoundary from 'sentry/components/errorBoundary';
+import {ReplayClipSection} from 'sentry/components/events/eventReplay/replayClipSection';
 import LazyLoad from 'sentry/components/lazyLoad';
-import {PlatformKey} from 'sentry/data/platformCategories';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import type {Group} from 'sentry/types/group';
+import useEventCanShowReplayUpsell from 'sentry/utils/event/useEventCanShowReplayUpsell';
+import {getReplayIdFromEvent} from 'sentry/utils/replays/getReplayIdFromEvent';
 import {useHaveSelectedProjectsSentAnyReplayEvents} from 'sentry/utils/replays/hooks/useReplayOnboarding';
-import projectSupportsReplay from 'sentry/utils/replays/projectSupportsReplay';
+import {useIsSampleEvent} from 'sentry/views/issueDetails/utils';
 
-type Props = {
+interface Props {
   event: Event;
-  orgSlug: string;
   projectSlug: string;
-  replayId: undefined | string;
-};
+  group?: Group;
+}
 
-export default function EventReplay({replayId, orgSlug, projectSlug, event}: Props) {
-  const hasSentOneReplay = useHaveSelectedProjectsSentAnyReplayEvents();
+const ReplayOnboardingPanel = lazy(() => import('./replayInlineOnboardingPanel'));
 
-  const onboardingPanel = useCallback(() => import('./replayInlineOnboardingPanel'), []);
-  const replayPreview = useCallback(() => import('./replayPreview'), []);
-
-  const supportsReplay = projectSupportsReplay({
-    id: event.projectID,
-    slug: event.projectSlug || '',
-    platform: event.platform as PlatformKey,
+export default function EventReplay({event, group, projectSlug}: Props) {
+  const replayId = getReplayIdFromEvent(event);
+  const {hasSentOneReplay} = useHaveSelectedProjectsSentAnyReplayEvents();
+  const {canShowUpsell, upsellPlatform, upsellProjectId} = useEventCanShowReplayUpsell({
+    event,
+    group,
+    projectSlug,
   });
+  const isSampleError = useIsSampleEvent();
 
-  if (!supportsReplay) {
-    return null;
+  if (replayId) {
+    return <ReplayClipSection event={event} replayId={replayId} group={group} />;
   }
 
-  if (!hasSentOneReplay) {
+  if (canShowUpsell && !hasSentOneReplay && !isSampleError) {
     return (
       <ErrorBoundary mini>
-        <LazyLoad component={onboardingPanel} />
+        <LazyLoad
+          LazyComponent={ReplayOnboardingPanel}
+          platform={upsellPlatform}
+          projectId={upsellProjectId}
+        />
       </ErrorBoundary>
     );
   }
 
-  if (!replayId) {
-    return null;
-  }
-
-  return (
-    <ErrorBoundary mini>
-      <LazyLoad
-        component={replayPreview}
-        replaySlug={`${projectSlug}:${replayId}`}
-        orgSlug={orgSlug}
-        event={event}
-      />
-    </ErrorBoundary>
-  );
+  return null;
 }

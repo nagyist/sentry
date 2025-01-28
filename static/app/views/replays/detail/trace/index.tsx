@@ -1,41 +1,39 @@
-import {useCallback} from 'react';
-
 import Feature from 'sentry/components/acl/feature';
 import FeatureDisabled from 'sentry/components/acl/featureDisabled';
 import {t} from 'sentry/locale';
-import type {Organization} from 'sentry/types';
-import Trace from 'sentry/views/replays/detail/trace/trace';
-import type {ReplayRecord} from 'sentry/views/replays/types';
+import useOrganization from 'sentry/utils/useOrganization';
+import Trace, {NewTraceView} from 'sentry/views/replays/detail/trace/trace';
 
-type Props = {
-  organization: Organization;
-  replayRecord: ReplayRecord;
-};
+import type {ReplayRecord} from '../../types';
 
 const features = ['organizations:performance-view'];
 
-function TraceFeature({organization, replayRecord}: Props) {
-  const renderDisabled = useCallback(
-    () => (
-      <FeatureDisabled
-        featureName={t('Performance Monitoring')}
-        features={features}
-        hideHelpToggle
-        message={t('Requires performance monitoring.')}
-      />
-    ),
-    []
+function PerfDisabled() {
+  return (
+    <FeatureDisabled
+      featureName={t('Performance Monitoring')}
+      features={features}
+      hideHelpToggle
+      message={t('Requires performance monitoring.')}
+    />
   );
+}
 
-  // TODO(replays): Configure an upsell message for when tracing is disabled
+function TraceFeature({replayRecord}: {replayRecord: ReplayRecord | undefined}) {
+  const organization = useOrganization();
+
   return (
     <Feature
       features={features}
       hookName={undefined}
       organization={organization}
-      renderDisabled={renderDisabled}
+      renderDisabled={PerfDisabled}
     >
-      <Trace organization={organization} replayRecord={replayRecord} />
+      {organization.features.includes('replay-trace-view-v1') ? (
+        <NewTraceView replay={replayRecord} />
+      ) : (
+        <Trace replay={replayRecord} />
+      )}
     </Feature>
   );
 }

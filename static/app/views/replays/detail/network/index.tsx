@@ -1,72 +1,123 @@
-import {useRef, useState} from 'react';
-import {AutoSizer, CellMeasurer, GridCellProps, MultiGrid} from 'react-virtualized';
-import styled from '@emotion/styled';
+import {useCallback, useMemo, useRef, useState} from 'react';
+import type {GridCellProps} from 'react-virtualized';
+import {AutoSizer, CellMeasurer, MultiGrid} from 'react-virtualized';
 
 import Placeholder from 'sentry/components/placeholder';
+import JumpButtons from 'sentry/components/replays/jumpButtons';
 import {useReplayContext} from 'sentry/components/replays/replayContext';
+import useJumpButtons from 'sentry/components/replays/useJumpButtons';
+import {GridTable} from 'sentry/components/replays/virtualizedGrid/gridTable';
+import {OverflowHidden} from 'sentry/components/replays/virtualizedGrid/overflowHidden';
+import {SplitPanel} from 'sentry/components/replays/virtualizedGrid/splitPanel';
+import useDetailsSplit from 'sentry/components/replays/virtualizedGrid/useDetailsSplit';
 import {t} from 'sentry/locale';
-import {getPrevReplayEvent} from 'sentry/utils/replays/getReplayEvent';
+import {trackAnalytics} from 'sentry/utils/analytics';
 import useCrumbHandlers from 'sentry/utils/replays/hooks/useCrumbHandlers';
+import useCurrentHoverTime from 'sentry/utils/replays/playback/providers/useCurrentHoverTime';
+import {getFrameMethod, getFrameStatus} from 'sentry/utils/replays/resourceFrame';
+import useOrganization from 'sentry/utils/useOrganization';
+import FilterLoadingIndicator from 'sentry/views/replays/detail/filterLoadingIndicator';
 import FluidHeight from 'sentry/views/replays/detail/layout/fluidHeight';
+import NetworkDetails from 'sentry/views/replays/detail/network/details';
 import NetworkFilters from 'sentry/views/replays/detail/network/networkFilters';
 import NetworkHeaderCell, {
   COLUMN_COUNT,
-  HEADER_HEIGHT,
 } from 'sentry/views/replays/detail/network/networkHeaderCell';
 import NetworkTableCell from 'sentry/views/replays/detail/network/networkTableCell';
 import useNetworkFilters from 'sentry/views/replays/detail/network/useNetworkFilters';
 import useSortNetwork from 'sentry/views/replays/detail/network/useSortNetwork';
 import NoRowRenderer from 'sentry/views/replays/detail/noRowRenderer';
 import useVirtualizedGrid from 'sentry/views/replays/detail/useVirtualizedGrid';
-import type {NetworkSpan} from 'sentry/views/replays/types';
 
-type Props = {
-  networkSpans: undefined | NetworkSpan[];
-  startTimestampMs: number;
+const HEADER_HEIGHT = 25;
+const BODY_HEIGHT = 25;
+
+const RESIZEABLE_HANDLE_HEIGHT = 90;
+
+const cellMeasurer = {
+  defaultHeight: BODY_HEIGHT,
+  defaultWidth: 100,
+  fixedHeight: true,
 };
 
-function NetworkList({networkSpans, startTimestampMs}: Props) {
-  const {currentTime, currentHoverTime} = useReplayContext();
+function NetworkList() {
+  const organization = useOrganization();
+  const {currentTime, replay} = useReplayContext();
+  const [currentHoverTime] = useCurrentHoverTime();
+  const {onMouseEnter, onMouseLeave, onClickTimestamp} = useCrumbHandlers();
 
-  const filterProps = useNetworkFilters({networkSpans: networkSpans || []});
+  const isNetworkDetailsSetup = Boolean(replay?.isNetworkDetailsSetup());
+  const networkFrames = replay?.getNetworkFrames();
+  const projectId = replay?.getReplay()?.project_id;
+  const startTimestampMs = replay?.getReplay()?.started_at?.getTime() || 0;
+
+  const [scrollToRow, setScrollToRow] = useState<undefined | number>(undefined);
+
+  const filterProps = useNetworkFilters({networkFrames: networkFrames || []});
   const {items: filteredItems, searchTerm, setSearchTerm} = filterProps;
   const clearSearchTerm = () => setSearchTerm('');
   const {handleSort, items, sortConfig} = useSortNetwork({items: filteredItems});
 
-  const {handleMouseEnter, handleMouseLeave, handleClick} =
-    useCrumbHandlers(startTimestampMs);
-
-  const current = getPrevReplayEvent({
-    items,
-    targetTimestampMs: startTimestampMs + currentTime,
-    allowEqual: true,
-    allowExact: true,
-  });
-
-  const hovered = currentHoverTime
-    ? getPrevReplayEvent({
-        items,
-        targetTimestampMs: startTimestampMs + currentHoverTime,
-        allowEqual: true,
-        allowExact: true,
-      })
-    : null;
-
-  const [scrollBarWidth, setScrollBarWidth] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<MultiGrid>(null);
-  const tableRef = useRef<HTMLDivElement>(null);
-  const {cache} = useVirtualizedGrid({
-    cellMeasurer: {
-      defaultWidth: 100,
-      fixedHeight: true,
-    },
-    ref: gridRef,
-    wrapperRef: tableRef,
-    deps: [items, searchTerm],
+  const deps = useMemo(() => [items, searchTerm], [items, searchTerm]);
+  const {cache, getColumnWidth, onScrollbarPresenceChange, onWrapperResize} =
+    useVirtualizedGrid({
+      cellMeasurer,
+      gridRef,
+      columnCount: COLUMN_COUNT,
+      dynamicColumnIndex: 2,
+      deps,
+    });
+
+  const {
+    onClickCell,
+    onCloseDetailsSplit,
+    resizableDrawerProps,
+    selectedIndex,
+    splitSize,
+  } = useDetailsSplit({
+    containerRef,
+    frames: networkFrames,
+    handleHeight: RESIZEABLE_HANDLE_HEIGHT,
+    urlParamName: 'n_detail_row',
+    onShowDetails: useCallback(
+      ({dataIndex, rowIndex}: any) => {
+        setScrollToRow(rowIndex);
+
+        const item = items[dataIndex];
+        trackAnalytics('replay.details-network-panel-opened', {
+          is_sdk_setup: isNetworkDetailsSetup,
+          organization,
+          resource_method: getFrameMethod(item!),
+          resource_status: String(getFrameStatus(item!)),
+          resource_type: item!.op,
+        });
+      },
+      [organization, items, isNetworkDetailsSetup]
+    ),
+    onHideDetails: useCallback(() => {
+      trackAnalytics('replay.details-network-panel-closed', {
+        is_sdk_setup: isNetworkDetailsSetup,
+        organization,
+      });
+    }, [organization, isNetworkDetailsSetup]),
   });
 
-  const renderTableRow = ({columnIndex, rowIndex, key, style, parent}: GridCellProps) => {
-    const network = items[rowIndex - 1];
+  const {
+    handleClick: onClickToJump,
+    onSectionRendered,
+    showJumpDownButton,
+    showJumpUpButton,
+  } = useJumpButtons({
+    currentTime,
+    frames: filteredItems,
+    isTable: true,
+    setScrollToRow,
+  });
+
+  const cellRenderer = ({columnIndex, rowIndex, key, style, parent}: GridCellProps) => {
+    const network = items[rowIndex - 1]!;
 
     return (
       <CellMeasurer
@@ -76,96 +127,110 @@ function NetworkList({networkSpans, startTimestampMs}: Props) {
         parent={parent}
         rowIndex={rowIndex}
       >
-        {rowIndex === 0 ? (
-          <NetworkHeaderCell
-            handleSort={handleSort}
-            index={columnIndex}
-            sortConfig={sortConfig}
-            style={style}
-          />
-        ) : (
-          <NetworkTableCell
-            columnIndex={columnIndex}
-            handleClick={handleClick}
-            handleMouseEnter={handleMouseEnter}
-            handleMouseLeave={handleMouseLeave}
-            isCurrent={network.id === current?.id}
-            isHovered={network.id === hovered?.id}
-            sortConfig={sortConfig}
-            span={network}
-            startTimestampMs={startTimestampMs}
-            style={style}
-          />
-        )}
+        {({measure: _, registerChild}) =>
+          rowIndex === 0 ? (
+            <NetworkHeaderCell
+              ref={e => e && registerChild?.(e)}
+              handleSort={handleSort}
+              index={columnIndex}
+              sortConfig={sortConfig}
+              style={{...style, height: HEADER_HEIGHT}}
+            />
+          ) : (
+            <NetworkTableCell
+              columnIndex={columnIndex}
+              currentHoverTime={currentHoverTime}
+              currentTime={currentTime}
+              frame={network}
+              onMouseEnter={onMouseEnter}
+              onMouseLeave={onMouseLeave}
+              onClickCell={onClickCell}
+              onClickTimestamp={onClickTimestamp}
+              ref={e => e && registerChild?.(e)}
+              rowIndex={rowIndex}
+              sortConfig={sortConfig}
+              startTimestampMs={startTimestampMs}
+              style={{...style, height: BODY_HEIGHT}}
+            />
+          )
+        }
       </CellMeasurer>
     );
   };
 
   return (
-    <NetworkContainer>
-      <NetworkFilters networkSpans={networkSpans} {...filterProps} />
-      <NetworkTable ref={tableRef}>
-        {networkSpans ? (
-          <AutoSizer>
-            {({width, height}) => (
-              <MultiGrid
-                ref={gridRef}
-                columnCount={COLUMN_COUNT}
-                columnWidth={({index}) => {
-                  if (index === 1) {
-                    return Math.max(
-                      Array.from(new Array(COLUMN_COUNT)).reduce(
-                        (remaining, _, i) =>
-                          i === 1 ? remaining : remaining - cache.columnWidth({index: i}),
-                        width - scrollBarWidth
-                      ),
-                      200
-                    );
-                  }
-
-                  return cache.columnWidth({index});
-                }}
-                cellRenderer={renderTableRow}
-                deferredMeasurementCache={cache}
-                fixedRowCount={1}
-                height={height}
-                noContentRenderer={() => (
-                  <NoRowRenderer
-                    unfilteredItems={networkSpans}
-                    clearSearchTerm={clearSearchTerm}
-                  >
-                    {t('No network requests recorded')}
-                  </NoRowRenderer>
+    <FluidHeight>
+      <FilterLoadingIndicator isLoading={!replay}>
+        <NetworkFilters networkFrames={networkFrames} {...filterProps} />
+      </FilterLoadingIndicator>
+      <GridTable ref={containerRef} data-test-id="replay-details-network-tab">
+        <SplitPanel
+          style={{
+            gridTemplateRows: splitSize !== undefined ? `1fr auto ${splitSize}px` : '1fr',
+          }}
+        >
+          {networkFrames ? (
+            <OverflowHidden>
+              <AutoSizer onResize={onWrapperResize}>
+                {({height, width}) => (
+                  <MultiGrid
+                    ref={gridRef}
+                    cellRenderer={cellRenderer}
+                    columnCount={COLUMN_COUNT}
+                    columnWidth={getColumnWidth(width)}
+                    deferredMeasurementCache={cache}
+                    estimatedColumnSize={100}
+                    estimatedRowSize={BODY_HEIGHT}
+                    fixedRowCount={1}
+                    height={height}
+                    noContentRenderer={() => (
+                      <NoRowRenderer
+                        unfilteredItems={networkFrames}
+                        clearSearchTerm={clearSearchTerm}
+                      >
+                        {t('No network requests recorded')}
+                      </NoRowRenderer>
+                    )}
+                    onScrollbarPresenceChange={onScrollbarPresenceChange}
+                    onScroll={() => {
+                      if (scrollToRow !== undefined) {
+                        setScrollToRow(undefined);
+                      }
+                    }}
+                    onSectionRendered={onSectionRendered}
+                    overscanColumnCount={COLUMN_COUNT}
+                    overscanRowCount={5}
+                    rowCount={items.length + 1}
+                    rowHeight={({index}) => (index === 0 ? HEADER_HEIGHT : BODY_HEIGHT)}
+                    scrollToRow={scrollToRow}
+                    width={width}
+                  />
                 )}
-                onScrollbarPresenceChange={({vertical, size}) =>
-                  setScrollBarWidth(vertical ? size : 0)
-                }
-                overscanColumnCount={COLUMN_COUNT}
-                overscanRowCount={5}
-                rowCount={items.length + 1}
-                rowHeight={({index}) => (index === 0 ? HEADER_HEIGHT : 28)}
-                width={width}
-              />
-            )}
-          </AutoSizer>
-        ) : (
-          <Placeholder height="100%" />
-        )}
-      </NetworkTable>
-    </NetworkContainer>
+              </AutoSizer>
+              {sortConfig.by === 'startTimestamp' && items.length ? (
+                <JumpButtons
+                  jump={showJumpUpButton ? 'up' : showJumpDownButton ? 'down' : undefined}
+                  onClick={onClickToJump}
+                  tableHeaderHeight={HEADER_HEIGHT}
+                />
+              ) : null}
+            </OverflowHidden>
+          ) : (
+            <Placeholder height="100%" />
+          )}
+          <NetworkDetails
+            {...resizableDrawerProps}
+            isSetup={isNetworkDetailsSetup}
+            // @ts-expect-error TS(7015): Element implicitly has an 'any' type because index... Remove this comment to see the full error message
+            item={selectedIndex ? items[selectedIndex] : null}
+            onClose={onCloseDetailsSplit}
+            projectId={projectId}
+            startTimestampMs={startTimestampMs}
+          />
+        </SplitPanel>
+      </GridTable>
+    </FluidHeight>
   );
 }
-
-const NetworkContainer = styled(FluidHeight)`
-  height: 100%;
-`;
-
-const NetworkTable = styled('div')`
-  position: relative;
-  height: 100%;
-  overflow: hidden;
-  border: 1px solid ${p => p.theme.border};
-  border-radius: ${p => p.theme.borderRadius};
-`;
 
 export default NetworkList;

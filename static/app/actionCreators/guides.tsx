@@ -1,11 +1,13 @@
 import * as Sentry from '@sentry/react';
 
+import {fetchOrganizationDetails} from 'sentry/actionCreators/organization';
 import {Client} from 'sentry/api';
 import ConfigStore from 'sentry/stores/configStore';
 import GuideStore from 'sentry/stores/guideStore';
-import {Organization} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
-import {getTourTask, isDemoWalkthrough} from 'sentry/utils/demoMode';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {isDemoModeEnabled} from 'sentry/utils/demoMode';
+import {getDemoGuides, getTourTask} from 'sentry/utils/demoMode/guides';
 
 import {demoEndModal} from './modal';
 import {updateOnboardingTask} from './onboardingTasks';
@@ -14,6 +16,10 @@ const api = new Client();
 
 export async function fetchGuides() {
   try {
+    if (isDemoModeEnabled()) {
+      GuideStore.fetchSucceeded(getDemoGuides());
+      return;
+    }
     const data = await api.requestPromise('/assistant/');
     GuideStore.fetchSucceeded(data);
   } catch (err) {
@@ -58,19 +64,22 @@ export function recordFinish(
   orgSlug: string | null,
   org: Organization | null
 ) {
-  api.request('/assistant/', {
-    method: 'PUT',
-    data: {
-      guide,
-      status: 'viewed',
-    },
-  });
+  if (!isDemoModeEnabled()) {
+    api.requestPromise('/assistant/', {
+      method: 'PUT',
+      data: {
+        guide,
+        status: 'viewed',
+      },
+    });
+  }
 
   const tourTask = getTourTask(guide);
 
-  if (isDemoWalkthrough() && tourTask && org) {
+  if (isDemoModeEnabled() && tourTask && org) {
     const {tour, task} = tourTask;
     updateOnboardingTask(api, org, {task, status: 'complete', completionSeen: true});
+    fetchOrganizationDetails(api, org.slug, true, false);
     demoEndModal({tour, orgSlug});
   }
 
@@ -79,26 +88,28 @@ export function recordFinish(
     return;
   }
 
-  trackAdvancedAnalyticsEvent('assistant.guide_finished', {
+  trackAnalytics('assistant.guide_finished', {
     organization: orgId,
     guide,
   });
 }
 
 export function recordDismiss(guide: string, step: number, orgId: string | null) {
-  api.request('/assistant/', {
-    method: 'PUT',
-    data: {
-      guide,
-      status: 'dismissed',
-    },
-  });
+  if (!isDemoModeEnabled()) {
+    api.requestPromise('/assistant/', {
+      method: 'PUT',
+      data: {
+        guide,
+        status: 'dismissed',
+      },
+    });
+  }
 
   const user = ConfigStore.get('user');
   if (!user) {
     return;
   }
-  trackAdvancedAnalyticsEvent('assistant.guide_dismissed', {
+  trackAnalytics('assistant.guide_dismissed', {
     organization: orgId,
     guide,
     step,

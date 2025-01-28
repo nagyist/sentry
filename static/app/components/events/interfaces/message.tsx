@@ -1,9 +1,14 @@
-import EventDataSection from 'sentry/components/events/eventDataSection';
+import styled from '@emotion/styled';
+
+import {renderLinksInText} from 'sentry/components/events/interfaces/crashContent/exception/utils';
 import KeyValueList from 'sentry/components/events/interfaces/keyValueList';
 import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
 import {t} from 'sentry/locale';
-import {EntryType, Event} from 'sentry/types';
-import {objectIsEmpty} from 'sentry/utils';
+import type {Event} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 
 type Props = {
   data: {
@@ -14,7 +19,7 @@ type Props = {
 };
 
 function renderParams(params: Props['data']['params'], meta: any) {
-  if (!params || objectIsEmpty(params)) {
+  if (!params || isEmptyObject(params)) {
     return null;
   }
 
@@ -34,7 +39,7 @@ function renderParams(params: Props['data']['params'], meta: any) {
       };
     });
 
-    return <KeyValueList data={arrayData} isSorted={false} isContextData />;
+    return <KeyValueList data={arrayData} shouldSort={false} isContextData />;
   }
 
   const objectData = Object.entries(params).map(([key, value]) => ({
@@ -44,21 +49,31 @@ function renderParams(params: Props['data']['params'], meta: any) {
     meta: meta?.data?.params?.[key]?.[''],
   }));
 
-  return <KeyValueList data={objectData} isSorted={false} isContextData />;
+  return <KeyValueList data={objectData} shouldSort={false} isContextData />;
 }
 
 export function Message({data, event}: Props) {
   const entryIndex = event.entries.findIndex(entry => entry.type === EntryType.MESSAGE);
   const meta = event?._meta?.entries?.[entryIndex] ?? {};
+  const messageData = data.formatted
+    ? renderLinksInText({exceptionText: data.formatted})
+    : null;
 
   return (
-    <EventDataSection type="message" title={t('Message')}>
-      {meta?.data?.formatted?.[''] ? (
-        <AnnotatedText value={data.formatted} meta={meta?.data?.formatted?.['']} />
-      ) : (
-        <pre className="plain">{data.formatted}</pre>
-      )}
+    <InterimSection title={t('Message')} type={SectionKey.MESSAGE}>
+      <PlainPre>
+        <AnnotatedText value={messageData} meta={meta?.data?.formatted?.['']} />
+      </PlainPre>
       {renderParams(data.params, meta)}
-    </EventDataSection>
+    </InterimSection>
   );
 }
+
+const PlainPre = styled('pre')`
+  background-color: inherit;
+  padding: 0;
+  border: 0;
+  margin-bottom: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+`;

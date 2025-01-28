@@ -1,92 +1,31 @@
 import * as Sentry from '@sentry/react';
 import keyBy from 'lodash/keyBy';
 
-import {t} from 'sentry/locale';
+import type {EntrySpans, EventTransaction} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
 import {
-  EntrySpans,
-  EntryType,
-  EventTransaction,
+  getIssueTypeFromOccurrenceType,
   IssueCategory,
   IssueType,
-  PlatformType,
-} from 'sentry/types';
+} from 'sentry/types/group';
 
-import {RawSpanType} from '../spans/types';
+import type {RawSpanType} from '../spans/types';
 
-import {ResourceLink} from './resources';
-import {TraceContextSpanProxy} from './spanEvidence';
-
-const RESOURCES_DESCRIPTIONS: Record<IssueType, string> = {
-  [IssueType.PERFORMANCE_N_PLUS_ONE_DB_QUERIES]: t(
-    "N+1 queries are extraneous queries (N) caused by a single, initial query (+1). In the Span Evidence above, we've identified the parent span where the extraneous spans are located and the extraneous spans themselves. To learn more about how to fix N+1 problems, check out these resources:"
-  ),
-  [IssueType.PERFORMANCE_FILE_IO_MAIN_THREAD]: t(
-    'File IO operations on your main thread may cause app hangs.'
-  ),
-  [IssueType.ERROR]: '',
-};
-
-type PlatformSpecificResources = Partial<Record<PlatformType, ResourceLink[]>>;
-
-const DEFAULT_RESOURCE_LINK: Record<IssueType, ResourceLink[]> = {
-  [IssueType.PERFORMANCE_N_PLUS_ONE_DB_QUERIES]: [
-    {
-      text: t('Sentry Docs: N+1 Queries'),
-      link: 'https://docs.sentry.io/product/issues/issue-details/performance-issues/n-one-queries/',
-    },
-  ],
-  [IssueType.PERFORMANCE_FILE_IO_MAIN_THREAD]: [],
-  [IssueType.ERROR]: [],
-};
-
-// TODO: When the Sentry blogpost for N+1s and documentation has been released, add them as resources for all platforms
-const RESOURCE_LINKS: Record<IssueType, PlatformSpecificResources> = {
-  [IssueType.PERFORMANCE_N_PLUS_ONE_DB_QUERIES]: {
-    python: [
-      {
-        text: t('Finding and Fixing Django N+1 Problems'),
-        link: 'https://blog.sentry.io/2020/09/14/finding-and-fixing-django-n-1-problems',
-      },
-    ],
-    'python-django': [
-      {
-        text: t('Finding and Fixing Django N+1 Problems'),
-        link: 'https://blog.sentry.io/2020/09/14/finding-and-fixing-django-n-1-problems',
-      },
-    ],
-  },
-  [IssueType.PERFORMANCE_FILE_IO_MAIN_THREAD]: {},
-  [IssueType.ERROR]: {},
-};
-
-export function getResourceDescription(issueType: IssueType): string {
-  return RESOURCES_DESCRIPTIONS[issueType];
-}
-
-export function getResourceLinks(
-  issueType: IssueType,
-  platform: PlatformType | undefined
-): ResourceLink[] {
-  let links: ResourceLink[] = [];
-  if (DEFAULT_RESOURCE_LINK[issueType]) {
-    links = [...DEFAULT_RESOURCE_LINK[issueType]];
-  }
-  if (RESOURCE_LINKS[issueType] && platform) {
-    const platformLink = RESOURCE_LINKS[issueType][platform];
-    if (platformLink) {
-      links = [...links, ...platformLink];
-    }
-  }
-  return links;
-}
+import type {TraceContextSpanProxy} from './spanEvidence';
 
 export function getSpanInfoFromTransactionEvent(
   event: Pick<
     EventTransaction,
-    'entries' | 'perfProblem' | 'issueCategory' | 'endTimestamp' | 'contexts'
+    | 'entries'
+    | 'perfProblem'
+    | 'issueCategory'
+    | 'endTimestamp'
+    | 'contexts'
+    | 'occurrence'
   >
 ) {
-  if (!event.perfProblem) {
+  const perfEvidenceData = event.perfProblem ?? event?.occurrence?.evidenceData;
+  if (!perfEvidenceData) {
     if (
       event.issueCategory === IssueCategory.PERFORMANCE &&
       event.endTimestamp > 1663560000 //  (Sep 19, 2022 onward), Some events could have been missing evidence before EA
@@ -105,23 +44,62 @@ export function getSpanInfoFromTransactionEvent(
     ? [...spanEntry.data]
     : [];
 
-  if (event?.contexts?.trace && event?.contexts?.trace?.span_id) {
+  if (event?.contexts?.trace?.span_id) {
     // TODO: Fix this conditional and check if span_id is ever actually undefined.
     spans.push(event.contexts.trace as TraceContextSpanProxy);
   }
   const spansById = keyBy(spans, 'span_id');
+  const parentSpanIDs = perfEvidenceData?.parentSpanIds ?? [];
+  const offendingSpanIDs = perfEvidenceData?.offenderSpanIds ?? [];
+  const causeSpanIDs = perfEvidenceData?.causeSpanIds ?? [];
+  return {
+    parentSpan: spansById[parentSpanIDs[0]],
+    offendingSpans: offendingSpanIDs.map((spanID: any) => spansById[spanID]),
+    causeSpans: causeSpanIDs.map((spanID: any) => spansById[spanID]),
+  };
+}
 
-  const parentSpan = event.perfProblem.parentSpanIds
-    ? spansById[event.perfProblem.parentSpanIds[0]]
-    : null;
-  const offendingSpan = event.perfProblem.offenderSpanIds
-    ? spansById[event.perfProblem.offenderSpanIds[0]]
-    : null;
+/**
+ * Given an event for a performance issue, returns the `affectedSpanIds` and `focusedSpanIds`.
+ * Both of these subsets of spans are used to determine which spans are initially visible on the span tree on the issue details
+ * page. The main difference is that the former will be highlighted in red, these spans are intended to indicate the 'root cause' spans
+ * of the issue, with the latter being supplemental spans that are involved in the issue but not necessarily the cause of it.
+ *
+ * @param event
+ */
+export function getProblemSpansForSpanTree(event: EventTransaction): {
+  affectedSpanIds: string[];
+  focusedSpanIds: string[];
+} {
+  const perfEvidenceData = event.perfProblem ?? event?.occurrence?.evidenceData;
 
-  const affectedSpanIds = [...event.perfProblem.offenderSpanIds];
-  if (parentSpan !== null) {
-    affectedSpanIds.push(parentSpan.span_id);
+  const issueType =
+    event.perfProblem?.issueType ??
+    getIssueTypeFromOccurrenceType(event?.occurrence?.type);
+  const affectedSpanIds: string[] = [];
+  const focusedSpanIds: string[] = [];
+
+  // By default, offender spans will always be `affected spans`
+  const offenderSpanIds = perfEvidenceData?.offenderSpanIds ?? [];
+  affectedSpanIds.push(...offenderSpanIds);
+
+  if (issueType !== IssueType.PERFORMANCE_N_PLUS_ONE_API_CALLS) {
+    const parentSpanIds = perfEvidenceData?.parentSpanIds ?? [];
+    affectedSpanIds.push(...parentSpanIds);
   }
 
-  return {parentSpan, offendingSpan, affectedSpanIds};
+  if (issueType === IssueType.PERFORMANCE_CONSECUTIVE_DB_QUERIES) {
+    const consecutiveSpanIds = perfEvidenceData?.causeSpanIds ?? [];
+
+    if (consecutiveSpanIds.length < 11) {
+      focusedSpanIds.push(...consecutiveSpanIds);
+    }
+  }
+
+  if (issueType === IssueType.PERFORMANCE_N_PLUS_ONE_DB_QUERIES) {
+    const precedingSpans = perfEvidenceData?.causeSpanIds ?? [];
+    focusedSpanIds.push(...precedingSpans);
+  }
+
+  return {affectedSpanIds, focusedSpanIds};
 }

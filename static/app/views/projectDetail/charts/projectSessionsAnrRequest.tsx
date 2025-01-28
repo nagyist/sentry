@@ -1,23 +1,23 @@
 import {Fragment, useEffect, useState} from 'react';
 import {useTheme} from '@emotion/react';
+import type {LineSeriesOption} from 'echarts';
 
+import LineSeries from 'sentry/components/charts/series/lineSeries';
 import {shouldFetchPreviousPeriod} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import {t} from 'sentry/locale';
-import {SessionApiResponse} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
+import type {SessionApiResponse} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
-import {getPeriod} from 'sentry/utils/getPeriod';
+import {getPeriod} from 'sentry/utils/duration/getPeriod';
+import {useApiQuery} from 'sentry/utils/queryClient';
 import {filterSessionsInTimeWindow, getSessionsInterval} from 'sentry/utils/sessions';
-import useApiRequests from 'sentry/utils/useApiRequests';
 
 import {DisplayModes} from '../projectCharts';
 
-import {ProjectSessionsChartRequestProps} from './projectSessionsChartRequest';
+import type {ProjectSessionsChartRequestProps} from './projectSessionsChartRequest';
 
-type State = {
-  sessionsData: SessionApiResponse;
-};
+const BAD_BEHAVIOUR_THRESHOLD = 0.47;
 
 function ProjectSessionsAnrRequest({
   children,
@@ -34,6 +34,9 @@ function ProjectSessionsAnrRequest({
     displayMode === DisplayModes.ANR_RATE ? 'anr_rate()' : 'foreground_anr_rate()';
 
   const [timeseriesData, setTimeseriesData] = useState<Series[] | null>(null);
+  const [badBehaviourSeries, setBadBehaviourSeries] = useState<LineSeriesOption[] | null>(
+    null
+  );
   const [previousTimeseriesData, setPreviousTimeseriesData] = useState<Series | null>(
     null
   );
@@ -52,6 +55,7 @@ function ProjectSessionsAnrRequest({
       field: [yAxis, 'count_unique(user)'],
       interval: getSessionsInterval(datetime, {
         highFidelity: organization.features.includes('minute-resolution-sessions'),
+        dailyInterval: true,
       }),
       project: projects[0],
       environment,
@@ -79,20 +83,17 @@ function ProjectSessionsAnrRequest({
 
   const queryParams = getParams();
 
-  const {data, isReloading, hasError} = useApiRequests<State>({
-    endpoints: [
-      [
-        'sessionsData',
-        `/organizations/${organization.slug}/sessions/`,
-        {query: queryParams},
-      ],
-    ],
-  });
+  const {data, isRefetching, isError} = useApiQuery<SessionApiResponse>(
+    [`/organizations/${organization.slug}/sessions/`, {query: queryParams}],
+    {
+      staleTime: 0,
+    }
+  );
 
   useEffect(() => {
-    if (defined(data.sessionsData)) {
+    if (defined(data)) {
       const filteredResponse = filterSessionsInTimeWindow(
-        data.sessionsData,
+        data,
         queryParams.start,
         queryParams.end
       );
@@ -102,9 +103,9 @@ function ProjectSessionsAnrRequest({
       const totalUsers = filteredResponse.groups.reduce(
         (acc, group) =>
           acc +
-          group.series['count_unique(user)']
-            .slice(shouldFetchWithPrevious ? dataMiddleIndex : 0)
-            .reduce((value, groupAcc) => groupAcc + value, 0),
+          group.series['count_unique(user)']!.slice(
+            shouldFetchWithPrevious ? dataMiddleIndex : 0
+          ).reduce((value, groupAcc) => groupAcc + value, 0),
         0
       );
 
@@ -115,9 +116,10 @@ function ProjectSessionsAnrRequest({
         ? filteredResponse.groups.reduce(
             (acc, group) =>
               acc +
-              group.series['count_unique(user)']
-                .slice(0, dataMiddleIndex)
-                .reduce((value, groupAcc) => groupAcc + value, 0),
+              group.series['count_unique(user)']!.slice(0, dataMiddleIndex).reduce(
+                (value, groupAcc) => groupAcc + value,
+                0
+              ),
             0
           )
         : 0;
@@ -125,7 +127,6 @@ function ProjectSessionsAnrRequest({
       const timeseriesData_ = [
         {
           seriesName: t('This Period'),
-          color: theme.green300,
           data: filteredResponse.intervals
             .slice(shouldFetchWithPrevious ? dataMiddleIndex : 0)
             .map((interval, i) => {
@@ -134,7 +135,7 @@ function ProjectSessionsAnrRequest({
                   acc +
                   group.series[yAxis]?.slice(
                     shouldFetchWithPrevious ? dataMiddleIndex : 0
-                  )[i],
+                  )[i]!,
                 0
               );
 
@@ -144,14 +145,28 @@ function ProjectSessionsAnrRequest({
                   totalUsers === 0 && previousPeriodTotalUsers === 0
                     ? 0
                     : anrRate === null
-                    ? null
-                    : anrRate * 100,
+                      ? null
+                      : anrRate * 100,
               };
             }),
         },
       ] as Series[];
 
-      setTimeseriesData(timeseriesData_);
+      const badBehaviourSeries_ =
+        yAxis === 'foreground_anr_rate()'
+          ? [
+              LineSeries({
+                name: t('Overall Bad Behaviour Threshold'),
+                data: filteredResponse.intervals
+                  .slice(shouldFetchWithPrevious ? dataMiddleIndex : 0)
+                  .map(interval => [interval, BAD_BEHAVIOUR_THRESHOLD]),
+                lineStyle: {color: theme.red200, width: 2, type: 'dotted'},
+                itemStyle: {color: theme.red200},
+                animation: false,
+                stack: 'bad_behaviour_threshold',
+              }),
+            ]
+          : null;
 
       const previousTimeseriesData_ = shouldFetchWithPrevious
         ? ({
@@ -160,7 +175,8 @@ function ProjectSessionsAnrRequest({
               .slice(0, dataMiddleIndex)
               .map((_interval, i) => {
                 const previousAnrRate = filteredResponse.groups.reduce(
-                  (acc, group) => acc + group.series[yAxis]?.slice(0, dataMiddleIndex)[i],
+                  (acc, group) =>
+                    acc + group.series[yAxis]?.slice(0, dataMiddleIndex)[i]!,
                   0
                 );
 
@@ -170,22 +186,24 @@ function ProjectSessionsAnrRequest({
                     totalUsers === 0 && previousPeriodTotalUsers === 0
                       ? 0
                       : previousAnrRate === null
-                      ? null
-                      : previousAnrRate * 100,
+                        ? null
+                        : previousAnrRate * 100,
                 };
               }),
           } as Series) // TODO(project-detail): Change SeriesDataUnit value to support null
         : null;
 
+      setTimeseriesData(timeseriesData_);
       setPreviousTimeseriesData(previousTimeseriesData_);
+      setBadBehaviourSeries(badBehaviourSeries_);
     }
   }, [
-    data.sessionsData,
+    data,
     onTotalValuesChange,
     queryParams.end,
     queryParams.start,
     shouldFetchWithPrevious,
-    theme.green300,
+    theme.red200,
     yAxis,
   ]);
 
@@ -193,11 +211,12 @@ function ProjectSessionsAnrRequest({
     <Fragment>
       {children({
         loading: timeseriesData === null,
-        reloading: isReloading,
-        errored: hasError,
+        reloading: isRefetching,
+        errored: isError,
         totalSessions,
         previousTimeseriesData,
         timeseriesData: timeseriesData ?? [],
+        additionalSeries: badBehaviourSeries ?? undefined,
       })}
     </Fragment>
   );

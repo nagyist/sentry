@@ -1,11 +1,12 @@
-import {browserHistory} from 'react-router';
-
-import Button from 'sentry/components/button';
-import {removeSpace} from 'sentry/components/smartSearchBar/utils';
+import {Button} from 'sentry/components/button';
+import {removeSpace} from 'sentry/components/deprecatedSmartSearchBar/utils';
 import {IconBookmark} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization, SavedSearchType} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import {SavedSearchType} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import {usePinSearch} from 'sentry/views/issueList/mutations/usePinSearch';
@@ -30,11 +31,7 @@ const usePinnedSearch = () => {
   return savedSearches?.find(savedSearch => savedSearch.isPinned) ?? null;
 };
 
-const IssueListSetAsDefault = ({
-  organization,
-  sort,
-  query,
-}: IssueListSetAsDefaultProps) => {
+function IssueListSetAsDefault({organization, sort, query}: IssueListSetAsDefaultProps) {
   const location = useLocation();
 
   const selectedSavedSearch = useSelectedSavedSearch();
@@ -43,38 +40,43 @@ const IssueListSetAsDefault = ({
     ? pinnedSearch?.id === selectedSavedSearch?.id
     : false;
 
-  const {mutate: pinSearch, isLoading: isPinning} = usePinSearch({
+  const {mutate: pinSearch, isPending: isPinning} = usePinSearch({
     onSuccess: response => {
       const {cursor: _cursor, page: _page, ...currentQuery} = location.query;
-      browserHistory.replace({
-        ...location,
-        pathname: `/organizations/${organization.slug}/issues/searches/${response.id}/`,
-        query: {referrer: 'search-bar', ...currentQuery},
-      });
+      browserHistory.replace(
+        normalizeUrl({
+          ...location,
+          pathname: `/organizations/${organization.slug}/issues/searches/${response.id}/`,
+          query: {...currentQuery, referrer: 'search-bar'},
+        })
+      );
     },
   });
-  const {mutate: unpinSearch, isLoading: isUnpinning} = useUnpinSearch({
+  const {mutate: unpinSearch, isPending: isUnpinning} = useUnpinSearch({
     onSuccess: () => {
       const {cursor: _cursor, page: _page, ...currentQuery} = location.query;
-      browserHistory.replace({
-        ...location,
-        pathname: `/organizations/${organization.slug}/issues/`,
-        query: {
-          referrer: 'search-bar',
-          query,
-          sort,
-          ...currentQuery,
-        },
-      });
+      browserHistory.replace(
+        normalizeUrl({
+          ...location,
+          pathname: `/organizations/${organization.slug}/issues/`,
+          query: {
+            query,
+            sort,
+            ...currentQuery,
+            referrer: 'search-bar',
+          },
+        })
+      );
     },
   });
 
   const onTogglePinnedSearch = () => {
-    trackAdvancedAnalyticsEvent('search.pin', {
+    trackAnalytics('search.pin', {
       organization,
       action: pinnedSearch ? 'unpin' : 'pin',
       search_type: 'issues',
       query: pinnedSearch?.query ?? query,
+      sort,
     });
 
     if (pinnedSearchActive) {
@@ -108,6 +110,6 @@ const IssueListSetAsDefault = ({
       {pinnedSearchActive ? t('Remove Default') : t('Set as Default')}
     </Button>
   );
-};
+}
 
 export default IssueListSetAsDefault;

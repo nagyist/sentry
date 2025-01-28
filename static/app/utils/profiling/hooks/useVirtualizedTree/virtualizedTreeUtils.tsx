@@ -1,13 +1,13 @@
-import {Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
 
-import {
+import type {
   TreeLike,
-  UseVirtualizedListProps,
+  UseVirtualizedTreeProps,
 } from 'sentry/utils/profiling/hooks/useVirtualizedTree/useVirtualizedTree';
-import {VirtualizedTree} from 'sentry/utils/profiling/hooks/useVirtualizedTree/VirtualizedTree';
-import {VirtualizedTreeNode} from 'sentry/utils/profiling/hooks/useVirtualizedTree/VirtualizedTreeNode';
+import type {VirtualizedTree} from 'sentry/utils/profiling/hooks/useVirtualizedTree/VirtualizedTree';
+import type {VirtualizedTreeNode} from 'sentry/utils/profiling/hooks/useVirtualizedTree/VirtualizedTreeNode';
 
-import {VirtualizedState} from './useVirtualizedTreeReducer';
+import type {VirtualizedState} from './useVirtualizedTreeReducer';
 
 export function updateGhostRow({
   element,
@@ -32,7 +32,7 @@ export function updateGhostRow({
   element.style.height = `${rowHeight}px`;
   element.style.position = 'absolute';
   element.style.backgroundColor =
-    interaction === 'clicked' ? theme.blue300 : theme.surface100;
+    interaction === 'clicked' ? theme.blue300 : theme.surface200;
   element.style.pointerEvents = 'none';
   element.style.willChange = 'transform, opacity';
   element.style.transform = `translateY(${rowHeight * selectedNodeIndex - scrollTop}px)`;
@@ -41,7 +41,7 @@ export function updateGhostRow({
 
 export function markRowAsHovered(
   hoveredRowKey: VirtualizedTreeRenderedRow<any>['key'] | null,
-  renderedItems: VirtualizedTreeRenderedRow<any>[],
+  renderedItems: Array<VirtualizedTreeRenderedRow<any>>,
   {
     rowHeight,
     scrollTop,
@@ -80,7 +80,7 @@ export function markRowAsHovered(
 
 export function markRowAsClicked(
   clickedRowKey: VirtualizedTreeRenderedRow<any>['key'] | null,
-  renderedItems: VirtualizedTreeRenderedRow<any>[],
+  renderedItems: Array<VirtualizedTreeRenderedRow<any>>,
   {
     rowHeight,
     scrollTop,
@@ -127,7 +127,7 @@ export function requestAnimationTimeout(
   callback: Function,
   delay: number
 ): AnimationTimeoutId {
-  let start;
+  let start: any;
   // wait for end of processing current event handler, because event handler may be long
   Promise.resolve().then(() => {
     start = Date.now();
@@ -163,7 +163,7 @@ export function findOptimisticStartIndex<T extends TreeLike>({
   scrollTop,
   viewport,
 }: {
-  items: VirtualizedTreeNode<T>[];
+  items: Array<VirtualizedTreeNode<T>>;
   overscroll: number;
   rowHeight: number;
   scrollTop: number;
@@ -189,16 +189,16 @@ export function findRenderedItems<T extends TreeLike>({
   scrollHeight,
   scrollTop,
 }: {
-  items: VirtualizedTreeNode<T>[];
-  overscroll: NonNullable<UseVirtualizedListProps<T>['overscroll']>;
-  rowHeight: UseVirtualizedListProps<T>['rowHeight'];
+  items: Array<VirtualizedTreeNode<T>>;
+  overscroll: NonNullable<UseVirtualizedTreeProps<T>['overscroll']>;
+  rowHeight: UseVirtualizedTreeProps<T>['rowHeight'];
   scrollHeight: VirtualizedState<T>['scrollHeight'];
   scrollTop: number;
 }) {
   // This is overscroll height for single direction, when computing the total,
   // we need to multiply this by 2 because we overscroll in both directions.
   const OVERSCROLL_HEIGHT = overscroll * rowHeight;
-  const renderedRows: VirtualizedTreeRenderedRow<T>[] = [];
+  const renderedRows: Array<VirtualizedTreeRenderedRow<T>> = [];
 
   // Clamp viewport to scrollHeight bounds [0, length * rowHeight] because some browsers may fire
   // scrollTop with negative values when the user scrolls up past the top of the list (overscroll behavior)
@@ -237,7 +237,7 @@ export function findRenderedItems<T extends TreeLike>({
         key: indexPointer,
         ref: null,
         styles: {position: 'absolute', top: elementTop},
-        item: items[indexPointer],
+        item: items[indexPointer]!,
       };
 
       visibleItemIndex++;
@@ -270,9 +270,11 @@ export function computeVirtualizedTreeNodeScrollTop(
     rowHeight,
     scrollHeight,
     currentScrollTop,
+    maxScrollableHeight,
   }: {
     currentScrollTop: number;
     index: number;
+    maxScrollableHeight: number;
     rowHeight: number;
     scrollHeight: number;
   },
@@ -285,7 +287,18 @@ export function computeVirtualizedTreeNodeScrollTop(
   }
 
   if (block === 'center') {
-    return newPosition - scrollHeight / 2 + rowHeight;
+    // The return value is bounded between 0 and the maximum scroll
+    // distance from the top (calculated by subtracting the max scroll
+    // height from the total height of the scrollable area). This is
+    // to ensure that the scroll position is never negative or greater
+    // than allowed.
+    return Math.max(
+      Math.min(
+        newPosition - scrollHeight / 2 + rowHeight,
+        maxScrollableHeight - scrollHeight
+      ),
+      0
+    );
   }
 
   if (block === 'end') {

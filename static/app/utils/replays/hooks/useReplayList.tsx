@@ -1,24 +1,37 @@
 import {useCallback, useEffect, useState} from 'react';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import type {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import type EventView from 'sentry/utils/discover/eventView';
 import fetchReplayList from 'sentry/utils/replays/fetchReplayList';
 import useApi from 'sentry/utils/useApi';
-import type {ReplayListLocationQuery} from 'sentry/views/replays/types';
+import usePageFilters from 'sentry/utils/usePageFilters';
+import type {
+  ReplayListLocationQuery,
+  ReplayListQueryReferrer,
+} from 'sentry/views/replays/types';
 
 type Options = {
   eventView: EventView;
   location: Location<ReplayListLocationQuery>;
   organization: Organization;
+  perPage?: number;
+  queryReferrer?: ReplayListQueryReferrer;
 };
 
-type State = Awaited<ReturnType<typeof fetchReplayList>>;
+type State = Awaited<ReturnType<typeof fetchReplayList>> & {isFetching: boolean};
 
 type Result = State;
 
-function useReplayList({eventView, location, organization}: Options): Result {
+function useReplayList({
+  eventView,
+  location,
+  organization,
+  queryReferrer,
+  perPage,
+}: Options): Result {
   const api = useApi();
+  const {selection} = usePageFilters();
 
   const [data, setData] = useState<State>({
     fetchError: undefined,
@@ -28,6 +41,7 @@ function useReplayList({eventView, location, organization}: Options): Result {
   });
 
   const loadReplays = useCallback(async () => {
+    api.clear();
     setData(prev => ({
       ...prev,
       isFetching: true,
@@ -37,10 +51,13 @@ function useReplayList({eventView, location, organization}: Options): Result {
       organization,
       location,
       eventView,
+      queryReferrer,
+      perPage,
+      selection,
     });
 
-    setData(response);
-  }, [api, organization, location, eventView]);
+    setData({...response, isFetching: false});
+  }, [api, organization, location, eventView, queryReferrer, perPage, selection]);
 
   useEffect(() => {
     loadReplays();

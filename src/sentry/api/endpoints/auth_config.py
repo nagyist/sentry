@@ -1,14 +1,18 @@
 from django.conf import settings
 from django.contrib.auth import REDIRECT_FIELD_NAME
+from django.http.request import HttpRequest
+from django.http.response import HttpResponseBase
 from django.urls import reverse
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import newsletter
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint, control_silo_endpoint
 from sentry.constants import WARN_SESSION_EXPIRED
 from sentry.http import get_server_hostname
-from sentry.models import Organization
+from sentry.models.organization import Organization
 from sentry.utils.auth import (
     get_org_redirect_url,
     has_user_registration,
@@ -21,10 +25,14 @@ from sentry.web.frontend.base import OrganizationMixin
 
 @control_silo_endpoint
 class AuthConfigEndpoint(Endpoint, OrganizationMixin):
+    publish_status = {
+        "GET": ApiPublishStatus.PRIVATE,
+    }
+    owner = ApiOwner.ENTERPRISE
     # Disable authentication and permission requirements.
-    permission_classes = []
+    permission_classes = ()
 
-    def dispatch(self, request: Request, *args, **kwargs) -> Response:
+    def dispatch(self, request: HttpRequest, *args, **kwargs) -> HttpResponseBase:
         self.determine_active_organization(request)
         return super().dispatch(request, *args, **kwargs)
 
@@ -79,7 +87,7 @@ class AuthConfigEndpoint(Endpoint, OrganizationMixin):
         context = {
             "serverHostname": get_server_hostname(),
             "canRegister": can_register,
-            "hasNewsletter": newsletter.is_enabled(),
+            "hasNewsletter": newsletter.backend.is_enabled(),
         }
 
         if "session_expired" in request.COOKIES:

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import os
 from copy import deepcopy
+from typing import Any
 
-from sentry.eventstore.models import Event
 from sentry.testutils.factories import get_fixture_path
 from sentry.utils import json
 
@@ -12,7 +14,7 @@ _fixture_path = get_fixture_path("events", "performance_problems")
 EVENTS = {}
 PROJECT_ID = 1
 
-for (dirpath, dirnames, filenames) in os.walk(_fixture_path):
+for dirpath, dirnames, filenames in os.walk(_fixture_path):
 
     for filename in filenames:
         [name, extension] = filename.split(".")
@@ -32,7 +34,7 @@ for (dirpath, dirnames, filenames) in os.walk(_fixture_path):
         EVENTS[full_event_name] = event
 
 
-def get_event(event_name) -> Event:
+def get_event(event_name: str) -> dict[str, Any]:
     # Create copy to avoid the risk of tests altering the event and affecting
     # other tests.
     return deepcopy(EVENTS[event_name])
@@ -53,14 +55,16 @@ def modify_span_start(obj, start):
     return obj
 
 
-def create_span(op, duration=100.0, desc="SELECT count() FROM table WHERE id = %s", hash=""):
+def create_span(
+    op, duration=100.0, desc="SELECT count() FROM table WHERE id = %s", hash="", data=None
+):
     return modify_span_duration(
-        SpanBuilder().with_op(op).with_description(desc).with_hash(hash).build(),
+        SpanBuilder().with_op(op).with_description(desc).with_hash(hash).with_data(data).build(),
         duration,
     )
 
 
-def create_event(spans, event_id="a" * 16):
+def create_event(spans, event_id: str = "a" * 16) -> dict[str, Any]:
     return {
         "event_id": event_id,
         "project": PROJECT_ID,

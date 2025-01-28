@@ -1,7 +1,7 @@
 import styled from '@emotion/styled';
 
 import ControlState from 'sentry/components/forms/fieldGroup/controlState';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconCheckmark, IconClose} from 'sentry/icons';
 import {t} from 'sentry/locale';
 
@@ -12,7 +12,7 @@ type Props = {
   status?: EventIdStatus;
 };
 
-const EventIdFieldStatusIcon = ({status, onClickIconClose}: Props) => {
+function EventIdFieldStatusIcon({status, onClickIconClose}: Props) {
   switch (status) {
     case EventIdStatus.ERROR:
     case EventIdStatus.INVALID:
@@ -31,7 +31,7 @@ const EventIdFieldStatusIcon = ({status, onClickIconClose}: Props) => {
     default:
       return null;
   }
-};
+}
 
 export default EventIdFieldStatusIcon;
 
